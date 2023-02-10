@@ -1,7 +1,7 @@
 
-PROJECT_DIR = ../..
-SRC_DIR = $(PROJECT_DIR)/julia
-TEST_DIR = $(SRC_DIR)/tests
+PROJECT_DIR = ..
+SRC_DIR = $(PROJECT_DIR)/src
+TEST_DIR = $(PROJECT_DIR)/test
 PERF_REF_DIR = $(TEST_DIR)/performance_data
 DATA_REF_DIR = $(TEST_DIR)/reference_data
 

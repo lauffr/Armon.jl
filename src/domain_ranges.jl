@@ -2,6 +2,36 @@
 import Base: oneto, length, size, axes, isempty, first, last, in, show
 
 #
+# Basic indexing macros
+#
+
+"""
+    @indexing_vars(params)
+
+Brings the parameters needed for the `@i` macro into the current scope.
+"""
+macro indexing_vars(params)
+    return esc(quote
+        (; index_start, row_length, col_length, idx_row, idx_col) = $(params)
+    end)
+end
+
+"""
+    @i(i, j)
+
+Converts the two-dimensional indexes `i` and `j` to a mono-dimensional index.
+
+```julia
+    idx = @i(i, j)
+```
+"""
+macro i(i, j)
+    return esc(quote
+        index_start + $(j) * idx_row + $(i) * idx_col
+    end)
+end
+
+#
 # Range utilities
 #
 
