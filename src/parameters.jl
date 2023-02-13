@@ -406,6 +406,14 @@ function print_parameters(p::ArmonParameters{T}) where T
 end
 
 
+"""
+    data_type(::ArmonParameters{T})
+
+Get `T`, the type used for numbers by the solver
+"""
+data_type(::ArmonParameters{T}) where T = T
+
+
 # Default copy method
 function Base.copy(p::ArmonParameters{T}) where T
     return ArmonParameters([getfield(p, k) for k in fieldnames(ArmonParameters{T})]...)

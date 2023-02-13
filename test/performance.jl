@@ -1,7 +1,7 @@
 
 using Printf
 
-include("performance_data/performance_functions.jl")
+include(joinpath(@__DIR__, "performance_data/performance_functions.jl"))
 
 
 function get_device_perf_info(device_type)

@@ -1,13 +1,9 @@
 
-if !@isdefined(Armon)
-    include(joinpath(@__DIR__, "../Armon.jl"))
-end
-
-using .Armon
+using Armon
 using Test
 
 
-include(joinpath(@__DIR__, "../kernel_stencil.jl"))
+include(joinpath(@__DIR__, "../src/kernel_stencil.jl"))
 
 
 lin_idx(p, i, j) = p.index_start + j * p.idx_row + i * p.idx_col

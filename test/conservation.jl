@@ -1,5 +1,5 @@
 
-import .Armon: @i, @indexing_vars, ArmonData, init_test, time_loop, conservation_vars
+import Armon: @i, @indexing_vars, ArmonData, init_test, time_loop, conservation_vars
 
 
 @testset "Conservation" begin

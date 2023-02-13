@@ -20,10 +20,10 @@ create_data_ref_file = $(DATA_REF_DIR)/create_references.jl
 .PHONY: create_perf_reference create_solver_reference short perf mpi all
 
 create_perf_reference:
-	cd $(PERF_REF_DIR) && $(JULIA) $(JULIA_ARGS) $(create_perf_ref_file)
+	$(JULIA) $(JULIA_ARGS) $(create_perf_ref_file)
 
 create_solver_reference:
-	cd $(DATA_REF_DIR) && $(JULIA) $(JULIA_ARGS) $(create_data_ref_file)
+	$(JULIA) $(JULIA_ARGS) $(create_data_ref_file)
 
 short:
 	$(JULIA) $(JULIA_ARGS) $(main_test_file) short

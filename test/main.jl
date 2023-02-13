@@ -1,11 +1,5 @@
 
-cd(@__DIR__)
-
-if !@isdefined(Armon)
-    include("../Armon.jl")
-end
-
-using .Armon
+using Armon
 using Test
 
 WRITE_FAILED = parse(Bool, get(ENV, "WRITE_FAILED", "false"))  # TODO: impl for non-mpi tests
@@ -24,7 +18,7 @@ else
 end
 
 
-include("reference_data/reference_functions.jl")
+include(joinpath(@__DIR__, "reference_data/reference_functions.jl"))
 
 
 if isinteractive()
@@ -32,7 +26,7 @@ if isinteractive()
     Tests available:
      - all            All tests below
      - short          Equivalent to 'code, stability, domains, convergence, conservation, kernels'
-     - code           Code quality
+     - quality        Code quality
      - stability      Type stability
      - domains        Domain 2D indexing
      - kernels        Compilation and correctness of indexing in generic kernels (CPU & GPU)
@@ -76,31 +70,33 @@ function do_tests(tests_to_do)
 
     !is_root && (Test.TESTSET_PRINT_ENABLE[] = false)
 
-    ts = @testset "Armon tests" begin
+    run_file(file_name) = include(joinpath(@__DIR__, file_name))
+
+    ts = @testset "Armon.jl" begin
         for test in tests_to_do
             if !is_root
-                if     test == :async      include("async.jl")
-                elseif test == :mpi        include("mpi.jl")
+                if     test == :async      run_file("async.jl")
+                elseif test == :mpi        run_file("mpi.jl")
                 else
                     # the test is for only a single process
                 end
-            elseif test == :quality        include("code_quality.jl")
-            elseif test == :stability      include("type_stability.jl")
-            elseif test == :domains        include("domains.jl")
-            elseif test == :convergence    include("convergence.jl")
-            elseif test == :conservation   include("conservation.jl")
-            elseif test == :kernels        include("kernels.jl")
-            elseif test == :gpu            include("gpu.jl")
-            elseif test == :performance    include("performance.jl")
-            elseif test == :async          include("async.jl")
-            elseif test == :mpi            include("mpi.jl")
+            elseif test == :quality        run_file("code_quality.jl")
+            elseif test == :stability      run_file("type_stability.jl")
+            elseif test == :domains        run_file("domains.jl")
+            elseif test == :convergence    run_file("convergence.jl")
+            elseif test == :conservation   run_file("conservation.jl")
+            elseif test == :kernels        run_file("kernels.jl")
+            elseif test == :gpu            run_file("gpu.jl")
+            elseif test == :performance    run_file("performance.jl")
+            elseif test == :async          run_file("async.jl")
+            elseif test == :mpi            run_file("mpi.jl")
             else
                 error("Unknown test set: $test")
             end
 
             # TODO: susceptibility test comparing a result with different rounding modes
             # TODO: idempotence of `measure_time=true/false`
-            # TODO: test lagrangian only mode (or remove it)
+            # TODO: NaN propagation
         end
     end
 

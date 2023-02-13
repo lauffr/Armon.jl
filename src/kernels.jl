@@ -244,7 +244,7 @@ end
             high_u::T, low_u::T, 
             high_v::T, low_v::T) = init_test_params(test_case)
     end
-    
+
     ix = ((i-1) % row_length) - nghost
     iy = ((i-1) ÷ row_length) - nghost
 

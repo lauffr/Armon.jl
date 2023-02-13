@@ -1,5 +1,5 @@
 
-import .Armon: ArmonData, read_data_from_file, write_sub_domain_file, inflate
+import Armon: ArmonData, read_data_from_file, write_sub_domain_file, inflate
 
 using MPI
 MPI.Init()

@@ -1,10 +1,9 @@
 
-include("../../Armon.jl")
-using .Armon
+using Armon
 using Dates
 
 
-include("performance_functions.jl")
+include(joinpath(@__DIR__,"performance_functions.jl"))
 
 
 function create_solver_performance_data(device_type, perf_data, memory_available)

@@ -128,7 +128,7 @@ macro time_expr_c(label, expr)  return build_time_expr(label, true,  expr; use_w
 macro time_event_a(label, expr) return build_time_expr(label, false,  expr; exclude_from_total=true) end
 macro time_expr_a(label, expr)  return build_time_expr(label, false,  expr; exclude_from_total=true, use_wait=false) end
 macro time_event(expr)          return build_time_expr(extract_function_name(expr), false, expr) end
-macro time_event_c(label, expr) return build_time_expr(extract_function_name(expr), true,  expr) end
+macro time_event_c(expr)        return build_time_expr(extract_function_name(expr), true,  expr) end
 macro time_expr(expr)           return build_time_expr(extract_function_name(expr), false, expr; use_wait=false) end
 macro time_expr_c(expr)         return build_time_expr(extract_function_name(expr), true,  expr; use_wait=false) end
 macro time_event_a(expr)        return build_time_expr(extract_function_name(expr), false, expr; exclude_from_total=true) end

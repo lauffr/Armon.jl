@@ -6,7 +6,7 @@ import .Armon: ArmonData, memory_required_for, init_test, data_to_gpu, MinmodLim
 import .Armon: @indexing_vars, @i, DomainRange, steps_ranges, get_device_array, linear_range
 
 
-include("device_info.jl")
+include(joinpath(@__DIR__, "device_info.jl"))
 
 
 const PERF_FILE_CPU = joinpath(@__DIR__, "performance_cpu.toml")

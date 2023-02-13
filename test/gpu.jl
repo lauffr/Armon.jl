@@ -4,7 +4,7 @@ using AMDGPU
 using CUDAKernels
 using ROCKernels
 
-import .Armon: data_to_gpu, data_from_gpu
+import Armon: data_to_gpu, data_from_gpu
 
 
 function run_armon_gpu_reference(ref_params::ArmonParameters{T}, device_array) where T

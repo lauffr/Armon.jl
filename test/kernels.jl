@@ -1,6 +1,6 @@
 
-import .Armon: @generic_kernel, @threads, @batch, @kernel, @index
-import .Armon: KernelWithThreading, KernelWithoutThreading, KernelWithSIMD, KernelWithoutSIMD
+import Armon: @generic_kernel, @threads, @batch, @kernel, @index
+import Armon: KernelWithThreading, KernelWithoutThreading, KernelWithSIMD, KernelWithoutSIMD
 
 
 @generic_kernel function saxpy_1D(α::T, x::V, y::V) where {T, V <: AbstractArray{T}}

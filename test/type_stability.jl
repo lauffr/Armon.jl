@@ -1,5 +1,5 @@
 
-import .Armon: limiter, NoLimiter, MinmodLimiter, SuperbeeLimiter
+import Armon: limiter, NoLimiter, MinmodLimiter, SuperbeeLimiter
 
 @testset "Type stability" begin
     @testset "Limiters" begin

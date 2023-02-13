@@ -11,7 +11,7 @@ using ROCKernels
 using CUDA
 using CUDAKernels
 
-export ArmonParameters, armon
+export ArmonParameters, armon, data_type
 
 # TODO LIST
 # center the positions of the cells in the output file
@@ -21,6 +21,7 @@ export ArmonParameters, armon
 # Bug: some time measurements are incorrect on GPU
 # Result struct/dict which holds all measured values (+ data if needed)
 # Neighbour enum + `has_neighbour(params, side)` method
+# Rename some values in ArmonParameters & variables in ArmonData
 
 """
     Axis
@@ -54,6 +55,7 @@ include("generic_kernel.jl")
 include("timing_macros.jl")
 include("kernels.jl")
 include("halo_exchange.jl")
+include("io.jl")
 include("solver.jl")
 
 end

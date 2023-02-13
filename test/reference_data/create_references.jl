@@ -1,11 +1,8 @@
 
-cd(@__DIR__())
-
-include("../../Armon.jl")
-using .Armon
+using Armon
 
 
-include("reference_functions.jl")
+include(joinpath(@__DIR__, "reference_functions.jl"))
 
 
 function create_reference_for(test, type)
