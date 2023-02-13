@@ -1,8 +1,8 @@
 
 using Printf
 using Test
-import .Armon: @i, @indexing_vars, ArmonData, TestCase, init_test, time_loop 
-import .Armon: write_data_to_file, read_data_from_file
+import Armon: @i, @indexing_vars, ArmonData, TestCase, init_test, time_loop 
+import Armon: write_data_to_file, read_data_from_file
 
 
 function get_reference_params(test::Symbol, type::Type; overriden_options...)
@@ -43,7 +43,7 @@ function write_reference_data(ref_params::ArmonParameters{T}, ref_file::IO, ref_
 
     col_range = 1:ny
     row_range = 1:nx
-    ref_params.output_precision = 15
+    # ref_params.output_precision = 15
     write_data_to_file(ref_params, ref_data, col_range, row_range, ref_file)
 end
 
