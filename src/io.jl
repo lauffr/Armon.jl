@@ -244,7 +244,7 @@ end
 
 function step_checkpoint(params::ArmonParameters{T}, 
         data::ArmonData{V}, cpu_data::ArmonData{W},
-        step_label::String, cycle::Int, axis::Union{Axis, Nothing};
+        step_label::String;
         dependencies=NoneEvent()) where {T, V <: AbstractArray{T}, W <: AbstractArray{T}}
     if params.compare
         wait(dependencies)
@@ -255,8 +255,8 @@ function step_checkpoint(params::ArmonParameters{T},
             cpu_data = data
         end
 
-        step_file_name = params.output_file * @sprintf("_%03d_%s", cycle, step_label)
-        step_file_name *= isnothing(axis) ? "" : "_" * string(axis)[1:1]
+        step_file_name = params.output_file * @sprintf("_%03d_%s", params.cycle, step_label)
+        step_file_name *= isnothing(params.axis) ? "" : "_" * string(params.axis)[1:1]
 
         if params.is_ref
             write_sub_domain_file(params, cpu_data, step_file_name; no_msg=true)

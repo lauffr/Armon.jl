@@ -1,6 +1,6 @@
 
 import Armon: shift, expand, prepend, inflate, shift_dir, inflate_dir, X_axis, Y_axis
-import Armon: DomainRange, StepsRanges, steps_ranges, update_axis_parameters, connect_ranges
+import Armon: DomainRange, StepsRanges, update_steps_ranges, update_axis_parameters, connect_ranges
 
 
 @testset "Domains" begin
@@ -119,7 +119,8 @@ import Armon: DomainRange, StepsRanges, steps_ranges, update_axis_parameters, co
 
         @testset "$axis" for axis in (X_axis, Y_axis)
             update_axis_parameters(p, axis)
-            steps = steps_ranges(p)
+            update_steps_ranges(p)
+            steps = p.steps_ranges
 
             splitted_range = Base.Fix2(getfield, axis == X_axis ? :row : :col)
 

@@ -96,7 +96,7 @@ function test_kernels_performance(params, data, kernels_perf_data, skip_test, co
 end
 
 
-# TODO : test the performance of dtCFL
+# TODO : test the performance of time_step
 
 @testset "Performance" begin
 

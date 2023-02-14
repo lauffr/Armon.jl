@@ -288,7 +288,6 @@ end
     pstar[i] = 0
 end
 
-
 #
 # GPU-only Kernels
 #
@@ -311,8 +310,9 @@ end
 #
 
 function numericalFluxes!(params::ArmonParameters{T}, data::ArmonData{V}, 
-        dt::T, range::DomainRange, label::Symbol;
+        range::DomainRange, label::Symbol;
         dependencies=NoneEvent(), no_threading=false) where {T, V <: AbstractArray{T}}
+    dt = params.cycle_dt
     u = params.current_axis == X_axis ? data.umat : data.vmat
     if params.riemann == :acoustic  # 2-state acoustic solver (Godunov)
         if params.scheme == :Godunov
@@ -332,27 +332,27 @@ function numericalFluxes!(params::ArmonParameters{T}, data::ArmonData{V},
 end
 
 
-function numericalFluxes!(params::ArmonParameters{T}, data::ArmonData{V}, 
-        dt::T, steps::StepsRanges, label::Symbol;
+function numericalFluxes!(params::ArmonParameters{T}, data::ArmonData{V}, label::Symbol;
         dependencies=NoneEvent(), no_threading=false) where {T, V <: AbstractArray{T}}
+    (; steps_ranges) = params
 
     if label == :inner
-        range = steps.inner_fluxes
+        range = steps_ranges.inner_fluxes
     elseif label == :outer_lb
-        range = steps.outer_lb_fluxes
+        range = steps_ranges.outer_lb_fluxes
         label = :outer
     elseif label == :outer_rt
-        range = steps.outer_rt_fluxes
+        range = steps_ranges.outer_rt_fluxes
         label = :outer
     elseif label == :full
-        range = steps.fluxes
+        range = steps_ranges.fluxes
     elseif label == :test
-        range = steps.real_domain
+        range = steps_ranges.real_domain
     else
         error("Wrong region label: $label")
     end
 
-    return numericalFluxes!(params, data, dt, range, label; dependencies, no_threading)
+    return numericalFluxes!(params, data, range, label; dependencies, no_threading)
 end
 
 
@@ -371,21 +371,22 @@ function update_EOS!(params::ArmonParameters, data::ArmonData, ::Bizarrium,
 end
 
 
-function update_EOS!(params::ArmonParameters, data::ArmonData,
-        steps::StepsRanges, label::Symbol; dependencies=NoneEvent(), no_threading=false)
+function update_EOS!(params::ArmonParameters, data::ArmonData, label::Symbol;
+        dependencies=NoneEvent(), no_threading=false)
+    (; steps_ranges) = params
 
     if label == :inner
-        range = steps.inner_EOS
+        range = steps_ranges.inner_EOS
     elseif label == :outer_lb
-        range = steps.outer_lb_EOS
+        range = steps_ranges.outer_lb_EOS
         label = :outer
     elseif label == :outer_rt
-        range = steps.outer_rt_EOS
+        range = steps_ranges.outer_rt_EOS
         label = :outer
     elseif label == :full
-        range = steps.EOS
+        range = steps_ranges.EOS
     elseif label == :test
-        range = steps.real_domain
+        range = steps_ranges.real_domain
     else
         error("Wrong region label: $label")
     end
@@ -412,11 +413,11 @@ function boundaryConditions!(params::ArmonParameters{T}, data::ArmonData{V}, sid
 end
 
 
-function cellUpdate!(params::ArmonParameters{T}, data::ArmonData{V}, dt::T, steps::StepsRanges;
+function cellUpdate!(params::ArmonParameters{T}, data::ArmonData{V};
         dependencies=NoneEvent()) where {T, V <: AbstractArray{T}}
-    range = steps.cell_update
+    range = params.steps_ranges.cell_update
     u = params.current_axis == X_axis ? data.umat : data.vmat
-    return cell_update!(params, data, range, dt, u; dependencies)
+    return cell_update!(params, data, range, params.cycle_dt, u; dependencies)
 end
 
 
@@ -428,8 +429,7 @@ function slope_minmod(uᵢ₋::T, uᵢ::T, uᵢ₊::T, r₋::T, r₊::T) where T
 end
 
 
-function projection_remap!(params::ArmonParameters{T}, data::ArmonData{V}, host_array::W,
-        steps::StepsRanges, dt::T;
+function projection_remap!(params::ArmonParameters{T}, data::ArmonData{V}, host_array::W;
         dependencies=NoneEvent()) where {T, V <: AbstractArray{T}, W <: AbstractArray{T}}
     params.projection == :none && return dependencies
 
@@ -438,7 +438,7 @@ function projection_remap!(params::ArmonParameters{T}, data::ArmonData{V}, host_
         # TODO: put this outside of the function
         # TODO: this should be done also in the non-MPI case, because of cellUpdate! changing more
         #  cells that it should.
-        dependencies = boundaryConditions!(params, data, host_array, params.current_axis; dependencies)
+        dependencies = boundaryConditions!(params, data, host_array; dependencies)
     end
 
     (; work_array_1, work_array_2, work_array_3, work_array_4) = data
@@ -447,22 +447,25 @@ function projection_remap!(params::ArmonParameters{T}, data::ArmonData{V}, host_
     advection_vρ = work_array_3
     advection_Eρ = work_array_4
 
+    advection_range = params.steps_ranges.advection
+    projection_range = params.steps_ranges.projection
+
     if params.projection == :euler
-        event = first_order_euler_remap!(params, data, steps.advection, dt,
+        event = first_order_euler_remap!(params, data, advection_range, params.cycle_dt,
             advection_ρ, advection_uρ, advection_vρ, advection_Eρ; dependencies)
     elseif params.projection == :euler_2nd
-        event = second_order_euler_remap!(params, data, steps.advection, dt,
+        event = second_order_euler_remap!(params, data, advection_range, params.cycle_dt,
             advection_ρ, advection_uρ, advection_vρ, advection_Eρ; dependencies)
     else
         error("Unknown projection scheme: $(params.projection)")
     end
 
-    return euler_projection!(params, data, steps.projection, dt,
+    return euler_projection!(params, data, projection_range, params.cycle_dt,
         advection_ρ, advection_uρ, advection_vρ, advection_Eρ; dependencies=event)
 end
 
 
-function dtCFL(params::ArmonParameters{T}, data::ArmonData{V}, prev_dt::T;
+function local_time_step(params::ArmonParameters{T}, data::ArmonData{V}, prev_dt::T;
         dependencies=NoneEvent()) where {T, V <: AbstractArray{T}}
     (; cmat, umat, vmat, domain_mask, work_array_1) = data
     (; cfl, Dt, ideb, ifin, global_grid, domain_size) = params
@@ -513,10 +516,9 @@ function dtCFL(params::ArmonParameters{T}, data::ArmonData{V}, prev_dt::T;
     end
 
     if !isfinite(dt) || dt ≤ 0
-        return dt  # Let it crash
+        return dt  # Error handling will happen after
     elseif prev_dt == 0
-        # First cycle: use the initial time step if defined
-        return Dt != 0 ? Dt : cfl * dt
+        return cfl * dt
     else
         # CFL condition and maximum increase per cycle of the time step
         return convert(T, min(cfl * dt, 1.05 * prev_dt))
@@ -524,18 +526,37 @@ function dtCFL(params::ArmonParameters{T}, data::ArmonData{V}, prev_dt::T;
 end
 
 
-function dtCFL_MPI(params::ArmonParameters{T}, data::ArmonData{V}, prev_dt::T;
+function time_step(params::ArmonParameters{T}, data::ArmonData{V};
         dependencies=NoneEvent()) where {T, V <: AbstractArray{T}}
-    @perf_task "loop" "dtCFL" local_dt::T = @time_expr_c dtCFL(params, data, prev_dt; dependencies)
+    (; Dt, dt_on_even_cycles, cycle, cst_dt, is_root, cart_comm) = params
 
-    if params.cst_dt || !params.use_MPI
-        return local_dt
-    end
+    params.curr_cycle_dt = params.next_cycle_dt
 
-    # Reduce all local_dts and broadcast the result to all processes
-    @perf_task "comms" "MPI_dt" @time_expr_c "dt_Allreduce_MPI" dt = MPI.Allreduce(
-        local_dt, MPI.Op(min, T), params.cart_comm)
-    return dt
+    if cst_dt
+        params.next_cycle_dt = Dt
+    elseif !dt_on_even_cycles || iseven(cycle) || params.curr_cycle_dt == 0
+        @perf_task "loop" "local_time_step" begin
+            local_dt = @time_expr_c local_time_step(params, data, params.curr_cycle_dt; dependencies)
+        end
+
+        if params.use_MPI
+            @perf_task "comms" "MPI_dt" @time_expr_c "dt_Allreduce_MPI" begin
+                # TODO: use a non-blocking IAllreduce, which would then be probed at the end of a cycle
+                #  however, we need to implement IAllreduce ourselves, since MPI.jl doesn't have a nice API for it (make a PR?)
+                next_dt = MPI.Allreduce(local_dt, MPI.Op(min, T), cart_comm)
+            end
+        else
+            next_dt = local_dt
+        end
+
+        if is_root && (!isfinite(next_dt) || next_dt <= 0.)
+            error("Invalid time step for cycle $(params.cycle): $next_dt")
+        end
+
+        params.next_cycle_dt = next_dt
+    else
+        params.next_cycle_dt = params.curr_cycle_dt
+    end    
 end
 
 

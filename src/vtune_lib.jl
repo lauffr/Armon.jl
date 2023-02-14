@@ -7,7 +7,8 @@ const use_VTune = parse(Bool, get(ENV, "ARMON_VTUNE_PROFILE", "false"))
 
 if use_VTune
     if !use_MPI_profiling && !use_ITT
-        error("Path to the IntelITT dir not defined in 'IntelITT_PATH' env var, this is required for VTune profiling. Clone it from https://github.com/mchristianl/IntelITT.jl")
+        error("Path to the IntelITT dir not defined in 'IntelITT_PATH' env var, this is required \
+               for VTune profiling. Clone it from https://github.com/mchristianl/IntelITT.jl")
     elseif use_MPI_profiling && use_ITT
         error("Exactly one of 'IntelITT_PATH' or 'ARMON_VTUNE_MPI' should be set.")
     end

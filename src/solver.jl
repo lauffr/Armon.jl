@@ -1,16 +1,76 @@
 
+macro checkpoint(step_label)
+    esc(:(step_checkpoint(params, data, cpu_data, string($step_label); dependencies)))
+end
+
+
+function init_time_step(params::ArmonParameters, data::ArmonData, cpu_data::ArmonData)
+    if params.Dt == 0
+        # No imposed initial time step, we must compute the first one manually
+        update_EOS!(params, data, :full) |> wait
+        step_checkpoint(params, data, cpu_data, "update_EOS_init") && return true
+        time_step(params, data)
+        params.curr_cycle_dt = params.next_cycle_dt
+    else
+        params.next_cycle_dt = Dt
+        params.curr_cycle_dt = Dt
+    end
+
+    return false
+end
+
+
+function solver_cycle(params::ArmonParameters, data::ArmonData, cpu_data::ArmonData, host_array::Vector; 
+        dependencies=NoneEvent())
+
+    # Future async structure:
+    # - update_EOS outer lb/rt
+    # - async BC (outer lb/rt)
+    # - update_EOS inner
+    # - fluxes inner
+    # - join async BC
+    # - fluxes outer lb/rt
+
+    # Sync structure:
+    # - update_EOS full
+    # - sync BC (outer lb/rt)
+    # - fluxes full
+
+    time_step(params, data; dependencies)
+
+    for (axis, dt_factor) in split_axes(params)
+        update_axis_parameters(params, axis)
+        update_steps_ranges(params)
+        params.cycle_dt = params.curr_cycle_dt * dt_factor
+
+        dependencies = update_EOS!(params, data, :full; dependencies)
+        @checkpoint("update_EOS") && @goto stop
+
+        dependencies = boundaryConditions!(params, data, host_array; dependencies)
+        @checkpoint("boundaryConditions") && @goto stop
+
+        dependencies = numericalFluxes!(params, data, :full; dependencies)
+        @checkpoint("numericalFluxes") && @goto stop
+
+        @perf_task "loop" "cellUpdate" dependencies = cellUpdate!(params, data; dependencies)
+        @checkpoint("cellUpdate") && @goto stop
+
+        @perf_task "loop" "euler_proj" dependencies = projection_remap!(params, data, host_array; dependencies)
+        @checkpoint("projection_remap") && @goto stop
+    end
+
+    return dependencies, false
+
+    @label stop
+    return dependencies, true
+end
+
+
 function time_loop(params::ArmonParameters{T}, data::ArmonData{V},
         cpu_data::ArmonData{W}) where {T, V <: AbstractArray{T}, W <: AbstractArray{T}}
-    (; maxtime, maxcycle, nx, ny, silent, animation_step, is_root, dt_on_even_cycles) = params
+    (; maxtime, maxcycle, nx, ny, silent, animation_step, is_root) = params
 
-    cycle  = 0
-    t::T   = 0.
-    next_dt::T = 0.
-    prev_dt::T = 0.
     total_cycles_time::T = 0.
-
-    t1 = time_ns()
-    t_warmup = t1
 
     if params.use_MPI && params.use_gpu
         # Host version of temporary array used for MPI communications
@@ -19,172 +79,73 @@ function time_loop(params::ArmonParameters{T}, data::ArmonData{V},
         host_array = Vector{T}()
     end
 
-    if params.async_comms
-        # Disable multi-threading when computing the outer domains, since Polyester cannot run
-        # multiple loops at the same time.
-        outer_params = copy(params)
-        outer_params.use_threading = false
-    else
-        outer_params = params
-    end
-
     if silent <= 1
         initial_mass, initial_energy = conservation_vars(params, data)
     end
 
-    update_axis_parameters(params, first(split_axes(params, cycle))[1])
-    steps = steps_ranges(params)
+    t1 = time_ns()
+    t_warmup = t1
 
-    prev_event = NoneEvent()
+    init_time_step(params, data, cpu_data) && @goto stop
 
-    # Finalize the initialisation by calling the EOS on the entire domain
-    update_EOS!(params, data, steps, :full) |> wait
-    step_checkpoint(params, data, cpu_data, "update_EOS_init", cycle, params.current_axis) && @goto stop
+    dependencies = NoneEvent()
 
     # Main solver loop
-    while t < maxtime && cycle < maxcycle
+    while params.time < maxtime && params.cycle < maxcycle
         cycle_start = time_ns()
 
-        if !dt_on_even_cycles || iseven(cycle)
-            next_dt = dtCFL_MPI(params, data, prev_dt; dependencies=prev_event)
-            prev_event = NoneEvent()
-
-            if is_root && (!isfinite(next_dt) || next_dt <= 0.)
-                error("Invalid dt for cycle $cycle: $next_dt")
-            end
-
-            if cycle == 0
-                prev_dt = next_dt
-            end
-        end
-
-        for (axis, dt_factor) in split_axes(params, cycle)
-            update_axis_parameters(params, axis)
-            steps = steps_ranges(params)
-
-            # Future async structure:
-            # - update_EOS outer lb/rt
-            # - async BC (outer lb/rt)
-            # - update_EOS inner
-            # - fluxes inner
-            # - join async BC
-            # - fluxes outer lb/rt
-
-            # Sync structure:
-            # - update_EOS full
-            # - sync BC (outer lb/rt)
-            # - fluxes full
-
-            @perf_task "loop" "EOS+comms+fluxes" @time_expr_c "EOS+comms+fluxes" if params.async_comms
-                @sync begin
-                    @async begin
-                        event_2 = update_EOS!(params, data, steps, :inner; dependencies=prev_event)
-                        event_2 = numericalFluxes!(params, data, prev_dt * dt_factor, steps, :inner; dependencies=event_2)
-                        wait(event_2)
-                    end
-
-                    @async begin
-                        # Since the other async tack is the one who should be using all the threads,
-                        # here we forcefully disable multi-threading.
-                        no_threading = true
-
-                        event_1 = update_EOS!(outer_params, data, steps, :outer_lb; dependencies=prev_event, no_threading)
-                        event_1 = update_EOS!(outer_params, data, steps, :outer_rt; dependencies=event_1, no_threading)
-
-                        event_1 = boundaryConditions!(outer_params, data, host_array, axis; 
-                            dependencies=event_1, no_threading)
-
-                        event_1 = numericalFluxes!(outer_params, data, prev_dt * dt_factor, 
-                            steps, :outer_lb; dependencies=event_1, no_threading)
-                        event_1 = numericalFluxes!(outer_params, data, prev_dt * dt_factor, 
-                            steps, :outer_rt; dependencies=event_1, no_threading)
-                        wait(event_1)
-                    end
-                end
-
-                step_checkpoint(params, data, cpu_data, "EOS+comms+fluxes", cycle, axis) && @goto stop
-                event = NoneEvent()
-            else
-                event = update_EOS!(params, data, steps, :full; 
-                    dependencies=prev_event)
-                step_checkpoint(params, data, cpu_data, "update_EOS", cycle, axis; 
-                    dependencies=event) && @goto stop
-
-                event = boundaryConditions!(params, data, host_array, axis; dependencies=event)
-                step_checkpoint(params, data, cpu_data, "boundaryConditions", cycle, axis; 
-                    dependencies=event) && @goto stop
-
-                event = numericalFluxes!(params, data, prev_dt * dt_factor, steps, :full; dependencies=event)
-                step_checkpoint(params, data, cpu_data, "numericalFluxes", cycle, axis;
-                    dependencies=event) && @goto stop
-
-                params.measure_time && wait(event)
-            end
-
-            @perf_task "loop" "cellUpdate" event = cellUpdate!(params, data, prev_dt * dt_factor, steps;
-                dependencies=event)
-            step_checkpoint(params, data, cpu_data, "cellUpdate", cycle, axis; 
-                dependencies=event) && @goto stop
-
-            @perf_task "loop" "euler_proj" event = projection_remap!(params, data, host_array, steps,
-                prev_dt * dt_factor; dependencies=event)
-            step_checkpoint(params, data, cpu_data, "projection_remap", cycle, axis;
-                dependencies=event) && @goto stop
-
-            prev_event = event
-        end
+        dependencies, stop = solver_cycle(params, data, cpu_data, host_array; dependencies)
+        stop && @goto stop
 
         if !is_warming_up()
             total_cycles_time += time_ns() - cycle_start
         end
 
-        cycle += 1
-
         if is_root
             if silent <= 1
-                wait(prev_event)
+                wait(dependencies)
                 current_mass, current_energy = conservation_vars(params, data)
                 ΔM = abs(initial_mass - current_mass)     / initial_mass   * 100
                 ΔE = abs(initial_energy - current_energy) / initial_energy * 100
                 @printf("Cycle %4d: dt = %.18f, t = %.18f, |ΔM| = %#8.6g%%, |ΔE| = %#8.6g%%\n",
-                    cycle, prev_dt, t, ΔM, ΔE)
+                    params.cycle + 1, params.curr_cycle_dt, params.time, ΔM, ΔE)
             end
         elseif silent <= 1
-            wait(prev_event)
+            wait(dependencies)
             conservation_vars(params, data)
         end
 
-        t += prev_dt
-        prev_dt = next_dt
+        params.cycle += 1
+        params.time += params.curr_cycle_dt
 
-        if cycle == 5
-            wait(prev_event)
+        if params.cycle == 5
+            wait(dependencies)
             t_warmup = time_ns()
             set_warmup(false)
         end
 
-        if animation_step != 0 && (cycle - 1) % animation_step == 0
-            wait(prev_event)
-            frame_index = (cycle - 1) ÷ animation_step
+        if animation_step != 0 && (params.cycle - 1) % animation_step == 0
+            wait(dependencies)
+            frame_index = (params.cycle - 1) ÷ animation_step
             frame_file = joinpath("anim", params.output_file) * "_" * @sprintf("%03d", frame_index)
             write_sub_domain_file(params, data, frame_file)
         end
     end
 
-    wait(prev_event)
+    wait(dependencies)
 
     @label stop
 
     t2 = time_ns()
 
     nb_cells = nx * ny
-    grind_time = (t2 - t_warmup) / ((cycle - 5) * nb_cells)
+    grind_time = (t2 - t_warmup) / ((params.cycle - 5) * nb_cells)
 
     if is_root
         if params.compare
             # ignore timing errors when comparing
-        elseif cycle <= 5 && maxcycle > 5
-            error("More than 5 cycles are needed to compute the grind time, got: $cycle")
+        elseif params.cycle <= 5 && maxcycle > 5
+            error("More than 5 cycles are needed to compute the grind time, got: $(params.cycle)")
         elseif t2 < t_warmup
             error("Clock error: $t2 < $t_warmup")
         end
@@ -196,12 +157,14 @@ function time_loop(params::ArmonParameters{T}, data::ArmonData{V},
             println("Warmup:      ", round((t_warmup - t1) / 1e9, digits=5),   " sec")
             println("Grind time:  ", round(grind_time / 1e3, digits=5),        " µs/cell/cycle")
             println("Cells/sec:   ", round(1 / grind_time * 1e3, digits=5),    " Mega cells/sec")
-            println("Cycles:      ", cycle)
-            println("Last cycle:  ", @sprintf("%.18f", t), " sec, Δt=", @sprintf("%.18f", next_dt), " sec")
+            println("Cycles:      ", params.cycle)
+            println("Last cycle:  ", 
+                @sprintf("%.18f", params.time), " sec, Δt=", 
+                @sprintf("%.18f", params.next_cycle_dt), " sec")
         end
     end
 
-    return next_dt, cycle, convert(T, 1 / grind_time), total_cycles_time
+    return params.next_cycle_dt, params.cycle, convert(T, 1 / grind_time), total_cycles_time
 end
 
 #

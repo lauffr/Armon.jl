@@ -134,15 +134,14 @@ function build_kernel_hiearchy()
     )
     host_array = Vector{Float64}()
 
-    dt = params.Dt
+    params.cycle_dt = params.Dt
 
     steps = [
-        (d, drs) -> (Armon.dtCFL, Armon.dtCFL(params, d, dt)),
-        (d, drs) -> (Armon.update_EOS!, Armon.update_EOS!(params, d, Armon.full_domain(drs), :full)),
-        (d, drs) -> (Armon.boundaryConditions!, Armon.boundaryConditions!(params, d, host_array, params.current_axis)),
-        (d, drs) -> (Armon.numericalFluxes!, Armon.numericalFluxes!(params, d, dt, drs, :full)),
-        (d, drs) -> (Armon.cellUpdate!, Armon.cellUpdate!(params, d, dt, drs)),
-        (d, drs) -> (Armon.projection_remap!, Armon.projection_remap!(params, d, host_array, dt)),
+        (d, drs) -> (Armon.update_EOS!, Armon.update_EOS!(params, d, :full)),
+        (d, drs) -> (Armon.boundaryConditions!, Armon.boundaryConditions!(params, d, host_array)),
+        (d, drs) -> (Armon.numericalFluxes!, Armon.numericalFluxes!(params, d, :full)),
+        (d, drs) -> (Armon.cellUpdate!, Armon.cellUpdate!(params, d)),
+        (d, drs) -> (Armon.projection_remap!, Armon.projection_remap!(params, d, host_array)),
     ]
 
     axes_stencils = Dict{Armon.Axis, Dict{Symbol, Armon.ArmonData}}()
@@ -202,24 +201,26 @@ function compute_kernel_ranges(scheme::Symbol = :GAD, projection::Symbol = :eule
     )
     host_array = Vector{Float64}()
 
-    dt = params.Dt
+    params.cycle_dt = params.Dt
 
     steps = [
-        # (d, stp) -> (Armon.dtCFL, Armon.dtCFL(params, d, dt)),
-        (d, stp) -> (Armon.update_EOS!, Armon.update_EOS!(params, d, stp, :test)),
-        (d, stp) -> (Armon.boundaryConditions!, Armon.boundaryConditions!(params, d, host_array, params.current_axis)),
-        (d, stp) -> (Armon.numericalFluxes!, Armon.numericalFluxes!(params, d, dt, stp, :test)),
-        (d, stp) -> (Armon.cellUpdate!, Armon.cellUpdate!(params, d, dt, stp)),
-        (d, stp) -> (
+        d -> (Armon.update_EOS!, Armon.update_EOS!(params, d, :test)),
+        d -> (Armon.boundaryConditions!, Armon.boundaryConditions!(params, d, host_array)),
+        d -> (Armon.numericalFluxes!, Armon.numericalFluxes!(params, d, :test)),
+        d -> (Armon.cellUpdate!, Armon.cellUpdate!(params, d)),
+        d -> (
             Armon.projection_remap!, 
-            (Armon.projection_remap!(params, d, host_array,  dt);
-             Armon.projection_remap!(params, d, host_array, -dt))
+            (
+                Armon.projection_remap!(params, d, host_array); params.cycle_dt *= -1
+                Armon.projection_remap!(params, d, host_array); params.cycle_dt *= -1
+            )
         ),
     ]
 
     for axis in (Armon.X_axis, Armon.Y_axis)
         Armon.update_axis_parameters(params, axis)
-        ranges = Armon.steps_ranges(params)
+        Armon.update_steps_ranges(params)
+        ranges = params.steps_ranges
 
         steps_range = Dict{Symbol, MVector{2, Tuple{Int, Int}}}()
         current_stencils = nothing
@@ -228,7 +229,7 @@ function compute_kernel_ranges(scheme::Symbol = :GAD, projection::Symbol = :eule
 
         for step in Iterators.reverse(steps)
             data = imprinting_data(params)
-            func, _ = step(data, ranges)
+            func, _ = step(data)
             step_name = typeof(func).name.name
 
             step_range = MVector{2, Tuple{Int, Int}}((0, 0), (0, 0))

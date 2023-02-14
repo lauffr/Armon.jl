@@ -152,7 +152,7 @@ function exchange_with_neighbour(params::ArmonParameters{T}, array::V, neighbour
 end
 
 
-function boundaryConditions!(params::ArmonParameters{T}, data::ArmonData{V}, host_array::W, axis::Axis; 
+function boundaryConditions!(params::ArmonParameters{T}, data::ArmonData{V}, host_array::W; 
         dependencies=NoneEvent(), no_threading=false) where {T, V <: AbstractArray{T}, W <: AbstractArray{T}}
     (; neighbours, cart_coords) = params
     # TODO : use active RMA instead? => maybe but it will (maybe) not work with GPUs: 
@@ -171,7 +171,7 @@ function boundaryConditions!(params::ArmonParameters{T}, data::ArmonData{V}, hos
     #   - send+receive right or bottom
     #   - send+receive left  or top
     (cx, cy) = cart_coords
-    if axis == X_axis
+    if params.current_axis == X_axis
         if cx % 2 == 0
             order = [:left, :right]
         else

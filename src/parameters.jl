@@ -45,6 +45,14 @@ mutable struct ArmonParameters{Flt_T}
     maxtime::Flt_T
     maxcycle::Int
 
+    # Current solver state
+    cycle::Int
+    time::Flt_T
+    cycle_dt::Flt_T  # Time step used by kernels, scaled according to the axis splitting
+    curr_cycle_dt::Flt_T  # Current unscaled time step
+    next_cycle_dt::Flt_T  # Time step of the next cycle
+    steps_ranges::StepsRanges
+
     # Output
     silent::Int
     output_dir::String
@@ -306,28 +314,43 @@ function ArmonParameters(;
         comm_array_size = 0
     end
 
-    return ArmonParameters{flt_type}(
+    params = ArmonParameters{flt_type}(
         test, riemann, scheme, riemann_limiter,
+
         nghost, nx, ny, dx, domain_size, origin,
         cfl, Dt, cst_dt, dt_on_even_cycles,
         axis_splitting, projection,
+
         row_length, col_length, nbcell,
         ideb, ifin, index_start,
         idx_row, idx_col,
         X_axis, 1, stencil_width,
+
         maxtime, maxcycle,
+
+        0, zero(flt_type), Dt, zero(flt_type), zero(flt_type), StepsRanges(),
+
         silent, output_dir, output_file,
         write_output, write_ghosts, write_slices, output_precision, animation_step,
         measure_time,
         measure_hw_counters, hw_counters_options, hw_counters_output,
         return_data,
+
         use_threading, use_simd, use_gpu, device, block_size,
+
         use_MPI, is_root, rank, root_rank,
         proc_size, (px, py), C_COMM, (cx, cy), neighbours, (g_nx, g_ny),
         single_comm_per_axis_pass, extra_ring_width, reorder_grid, comm_array_size,
+
         async_comms,
+
         compare, is_ref, comparison_tolerance
     )
+
+    update_axis_parameters(params, first(split_axes(params))[1])
+    update_steps_ranges(params)
+
+    return params
 end
 
 
@@ -430,30 +453,13 @@ function get_device_array(params::ArmonParameters)
     end
 end
 
-
-function update_axis_parameters(params::ArmonParameters{T}, axis::Axis) where T
-    (; row_length, global_grid, domain_size) = params
-    (g_nx, g_ny) = global_grid
-    (sx, sy) = domain_size
-
-    params.current_axis = axis
-
-    if axis == X_axis
-        params.s = 1
-        params.dx = sx / g_nx
-    else  # axis == Y_axis
-        params.s = row_length
-        params.dx = sy / g_ny
-    end
-end
-
 #
 # Axis splitting
 #
 
-function split_axes(params::ArmonParameters{T}, cycle::Int) where T
+function split_axes(params::ArmonParameters{T}) where T
     axis_1, axis_2 = X_axis, Y_axis
-    if iseven(cycle)
+    if iseven(params.cycle)
         axis_1, axis_2 = axis_2, axis_1
     end
 
@@ -480,4 +486,121 @@ function split_axes(params::ArmonParameters{T}, cycle::Int) where T
     else
         error("Unknown axes splitting method: $(params.axis_splitting)")
     end
+end
+
+
+function update_axis_parameters(params::ArmonParameters{T}, axis::Axis) where T
+    (; row_length, global_grid, domain_size) = params
+    (g_nx, g_ny) = global_grid
+    (sx, sy) = domain_size
+
+    params.current_axis = axis
+
+    if axis == X_axis
+        params.s = 1
+        params.dx = sx / g_nx
+    else  # axis == Y_axis
+        params.s = row_length
+        params.dx = sy / g_ny
+    end
+end
+
+#
+# Steps indexing
+#
+
+function update_steps_ranges(params::ArmonParameters)
+    (; nx, ny, nghost, row_length, current_axis) = params
+    @indexing_vars(params)
+
+    ax = current_axis
+    steps = params.steps_ranges
+
+    # Extra cells to compute in each step
+    extra_FLX = 1
+    extra_UP = 1
+
+    if params.projection == :euler
+        # No change
+    elseif params.projection == :euler_2nd
+        extra_FLX += 1
+        extra_UP  += 1
+    else
+        error("Unknown scheme: $(params.projection)")
+    end
+
+    # Real domain
+    col_range = @i(1,1):row_length:@i(1,ny)
+    row_range = 1:nx
+    real_range = DomainRange(col_range, row_range)
+    steps.real_domain = real_range
+
+    # Steps ranges, computed so that there is no need for an extra BC step before the projection
+    steps.EOS = real_range  # The BC overwrites any changes to the ghost cells right after
+    steps.fluxes = inflate_dir(real_range, ax, extra_FLX)
+    steps.cell_update = inflate_dir(real_range, ax, extra_UP)
+    steps.advection = expand_dir(real_range, ax, 1)
+    steps.projection = real_range
+
+    # Fluxes are computed between 'i-s' and 'i', we need one more cell on the right to have all fluxes
+    steps.fluxes = expand_dir(steps.fluxes, ax, 1)
+
+    # Inner ranges: real domain without sides
+    steps.inner_EOS = inflate_dir(steps.EOS, ax, -nghost)
+    steps.inner_fluxes = steps.inner_EOS
+
+    rt_offset = direction_length(steps.inner_EOS, ax)
+
+    # Outer ranges: sides of the real domain
+    if ax == X_axis
+        steps.outer_lb_EOS = DomainRange(col_range, row_range[1:nghost])
+    else
+        steps.outer_lb_EOS = DomainRange(col_range[1:nghost], row_range)
+    end
+
+    steps.outer_rt_EOS = shift_dir(steps.outer_lb_EOS, ax, nghost + rt_offset)
+
+    if rt_offset == 0
+        # Correction when the side regions overlap
+        overlap_width = direction_length(real_range, ax) - 2*nghost
+        steps.outer_rt_EOS = expand_dir(steps.outer_rt_EOS, ax, overlap_width)
+    end
+
+    steps.outer_lb_fluxes = prepend_dir(steps.outer_lb_EOS, ax, extra_FLX)
+    steps.outer_rt_fluxes = expand_dir(steps.outer_rt_EOS, ax, extra_FLX + 1)
+end
+
+
+function boundary_conditions_indexes(params::ArmonParameters, side::Symbol)
+    (; row_length, nx, ny) = params
+    @indexing_vars(params)
+
+    stride::Int = 1
+    d::Int = 1
+
+    if side == :left
+        stride = row_length
+        i_start = @i(0,1)
+        loop_range = 1:ny
+        d = 1
+    elseif side == :right
+        stride = row_length
+        i_start = @i(nx+1,1)
+        loop_range = 1:ny
+        d = -1
+    elseif side == :top
+        stride = 1
+        i_start = @i(1,ny+1)
+        loop_range = 1:nx
+        d = -row_length
+    elseif side == :bottom
+        stride = 1
+        i_start = @i(1,0)
+        loop_range = 1:nx
+        d = row_length
+    else
+        error("Unknown side: $side")
+    end
+
+    return i_start, loop_range, stride, d
 end
