@@ -75,10 +75,9 @@ function do_tests(tests_to_do)
     ts = @testset "Armon.jl" begin
         for test in tests_to_do
             if !is_root
-                if     test == :async      run_file("async.jl")
-                elseif test == :mpi        run_file("mpi.jl")
+                if test == :mpi            run_file("mpi.jl")
                 else
-                    # the test is for only a single process
+                    # the test is for a single process only
                 end
             elseif test == :quality        run_file("code_quality.jl")
             elseif test == :stability      run_file("type_stability.jl")
@@ -88,7 +87,6 @@ function do_tests(tests_to_do)
             elseif test == :kernels        run_file("kernels.jl")
             elseif test == :gpu            run_file("gpu.jl")
             elseif test == :performance    run_file("performance.jl")
-            elseif test == :async          run_file("async.jl")
             elseif test == :mpi            run_file("mpi.jl")
             else
                 error("Unknown test set: $test")

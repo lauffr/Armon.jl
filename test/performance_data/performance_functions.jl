@@ -2,7 +2,7 @@
 using TOML
 using ThreadPinning
 using KernelAbstractions
-import .Armon: ArmonData, memory_required_for, init_test, data_to_gpu, MinmodLimiter
+import .Armon: ArmonDualData, memory_required, init_test, MinmodLimiter
 import .Armon: @indexing_vars, @i, DomainRange, update_steps_ranges, get_device_array, linear_range
 
 
@@ -100,10 +100,8 @@ function get_performance_params(test::Symbol, type::Type, device_type::Symbol, n
             nghost=5, nx=n, ny=n, 
             maxcycle=50, maxtime=1,
             silent=5, write_output=false, measure_time=false,
-            use_MPI=false,
-            use_threading=true, use_simd=true,
-            use_gpu=false,
-            single_comm_per_axis_pass=true, async_comms=false)
+            use_MPI=false, async_comms=false,
+            use_threading=true, use_simd=true, use_gpu=false)
     elseif device_type == :GPU
         gpu_type = get_available_gpu()
         ArmonParameters(; 
@@ -112,9 +110,8 @@ function get_performance_params(test::Symbol, type::Type, device_type::Symbol, n
             nghost=5, nx=n, ny=n, 
             maxcycle=50, maxtime=1,
             silent=5, write_output=false, measure_time=false,
-            use_MPI=false,
-            use_gpu=true, device=gpu_type, block_size=1024,
-            single_comm_per_axis_pass=true, async_comms=false)
+            use_MPI=false, async_comms=false,
+            use_gpu=true, device=gpu_type, block_size=1024)
     end
 end
 
@@ -125,7 +122,7 @@ end
 
 
 function has_enough_memory_for(params, memory_available)
-    memory_needed = memory_required_for(params)
+    memory_needed = memory_required(params)
     not_enough_mem = memory_needed > memory_available
     if not_enough_mem
         mem_req_str = round(memory_needed / 1e9; digits=1)
@@ -146,25 +143,17 @@ end
 function setup_kernel_tests(params, memory_available)
     not_enough_mem = has_enough_memory_for(params, memory_available)
     not_enough_mem && return true, nothing
-    
-    data = ArmonData(params)
+
+    data = ArmonDualData(params)
     init_test(params, data)
-
-    if !params.use_MPI
-        # Resize the communication array for the halo exchange kernels
-        resize!(data.tmp_comm_array, max(params.nx, params.ny) * params.nghost * 7)
-    end
-
-    if params.use_gpu
-        data = data_to_gpu(data, get_device_array(params))
-    end
+    device_to_host!(data)
 
     return false, data
 end
 
 
-function measure_kernel_performance(params::ArmonParameters{T}, data::ArmonData{V}, 
-        kernel_lambda, single_row_kernel) where {T, V <: AbstractArray{T}}
+function measure_kernel_performance(params::ArmonParameters{T}, data::ArmonDualData, 
+        kernel_lambda, single_row_kernel) where T
     (; row_length, nghost, nx) = params
     @indexing_vars(params)
 

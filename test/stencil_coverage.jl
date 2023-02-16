@@ -74,8 +74,7 @@ function get_all_kernel_stencils()
         :nghost => 5, :nx => 100, :ny => 100,
         :cfl => 0,
         :silent => 5, :write_output => false, :measure_time => false,
-        :use_MPI => false,
-        :single_comm_per_axis_pass => false, :async_comms => false
+        :use_MPI => false, :async_comms => false
     )
 
     kernel_stencils = Dict{String, Dict{Symbol, Any}}()
@@ -115,8 +114,7 @@ function imprinting_data(params::ArmonParameters{T}) where T
         ImprintingArray{T, 2}(dims, offsets),
         ImprintingArray{T, 2}(dims, offsets),
         ImprintingArray{T, 2}(dims, offsets),
-        ImprintingArray{T, 2}(dims, offsets),
-        ImprintingArray{T, 2}((params.comm_array_size, 1))
+        ImprintingArray{T, 2}(dims, offsets)
     )
 end
 
@@ -129,7 +127,7 @@ function build_kernel_hiearchy()
         :cfl => 0,
         :silent => 5, :write_output => false, :measure_time => false,
         :use_MPI => false,
-        :single_comm_per_axis_pass => false, :async_comms => false,
+        :async_comms => false,
         :use_simd => false, :use_threading => false,
     )
     host_array = Vector{Float64}()
@@ -195,8 +193,7 @@ function compute_kernel_ranges(scheme::Symbol = :GAD, projection::Symbol = :eule
         :nghost => 5, :nx => 13, :ny => 7,
         :cfl => 0,
         :silent => 5, :write_output => false, :measure_time => false,
-        :use_MPI => false,
-        :single_comm_per_axis_pass => false, :async_comms => false,
+        :use_MPI => false, :async_comms => false,
         :use_simd => false, :use_threading => false,
     )
     host_array = Vector{Float64}()

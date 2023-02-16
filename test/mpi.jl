@@ -1,5 +1,5 @@
 
-import Armon: ArmonData, read_data_from_file, write_sub_domain_file, inflate
+import Armon: ArmonData, ArmonDualData, read_data_from_file, write_sub_domain_file, inflate, conservation_vars
 
 using MPI
 MPI.Init()
@@ -75,7 +75,7 @@ end
 
 function ref_data_for_sub_domain(params::ArmonParameters{T}) where T
     file_path = get_reference_data_file_name(params.test, T)
-    ref_data = ArmonData(T, params.nbcell, params.comm_array_size)
+    ref_data = ArmonData(params)
     ref_dt::T = 0
     ref_cycles = 0
 
@@ -91,9 +91,7 @@ end
 
 function ref_params_for_sub_domain(test::Symbol, type::Type, px, py; overriden_options...)
     ref_options = Dict(
-        :use_MPI => true, :px => px, :py => py,
-        :single_comm_per_axis_pass => false, :reorder_grid => true,
-        :async_comms => false
+        :use_MPI => true, :px => px, :py => py, :reorder_grid => true, :async_comms => false
     )
     merge!(ref_options, overriden_options)
     return get_reference_params(test, type; ref_options...)
@@ -158,6 +156,7 @@ end
 # case (100×100)
 domain_combinations = [
     (1, 1),
+    (1, 2),
     (1, 4),
     (4, 1),
     (2, 2),
@@ -180,31 +179,71 @@ total_proc_count = MPI.Comm_size(MPI.COMM_WORLD)
             comm, proc_in_grid = MPI.COMM_NULL, false
         end
 
-        # Reference tests
-        @testset "$test with $type" for type in (Float64,),
-                                        test in (:Sod, :Sod_y, :Sod_circ, :Sedov, :Bizarrium)
-            @MPI_test comm begin
-                ref_params = ref_params_for_sub_domain(test, type, px, py)
-                dt, cycles, data = run_armon_reference(ref_params)
-                ref_dt, ref_cycles, ref_data = ref_data_for_sub_domain(ref_params)
 
-                @root_test dt ≈ ref_dt atol=abs_tol(type) rtol=rel_tol(type)
-                @root_test cycles == ref_cycles
+        @testset "Reference" begin
+            @testset "$test with $type" for type in (Float64,),
+                                            test in (:Sod, :Sod_y, :Sod_circ, :Sedov, :Bizarrium)
+                @MPI_test comm begin
+                    ref_params = ref_params_for_sub_domain(test, type, px, py)
+                    dt, cycles, data = run_armon_reference(ref_params)
+                    ref_dt, ref_cycles, ref_data = ref_data_for_sub_domain(ref_params)
 
-                diff_count = count_differences(ref_params, data, ref_data)
-                if WRITE_FAILED
-                    global_diff_count = MPI.Allreduce(diff_count, MPI.SUM, comm)
-                    if global_diff_count > 0
-                        write_sub_domain_file(ref_params, data, "test_$(test)_$(type)_$(px)x$(py)"; no_msg=true)
-                        write_sub_domain_file(ref_params, ref_data, "ref_$(test)_$(type)_$(px)x$(py)"; no_msg=true)
+                    @root_test dt ≈ ref_dt atol=abs_tol(type) rtol=rel_tol(type)
+                    @root_test cycles == ref_cycles
+
+                    diff_count = count_differences(ref_params, host(data), ref_data)
+                    if WRITE_FAILED
+                        global_diff_count = MPI.Allreduce(diff_count, MPI.SUM, comm)
+                        if global_diff_count > 0
+                            write_sub_domain_file(ref_params, data, "test_$(test)_$(type)_$(px)x$(py)"; no_msg=true)
+                            write_sub_domain_file(ref_params, ref_data, "ref_$(test)_$(type)_$(px)x$(py)"; no_msg=true)
+                        end
+                        println("[$(MPI.Comm_rank(comm))]: found $diff_count")
                     end
-                    println("[$(MPI.Comm_rank(comm))]: found $diff_count")
+
+                    diff_count == 0
+                end skip=!enough_processes || !proc_in_grid
+            end
+        end
+
+
+        @testset "Async communications" begin
+            @testset "$test with $type" for type in (Float64,),
+                                            test in (:Sod, :Sod_y, :Sod_circ, :Sedov, :Bizarrium)
+                @MPI_test comm begin
+                    ref_params = ref_params_for_sub_domain(test, type, px, py; async_comms=true)
+                    dt, cycles, data = run_armon_reference(ref_params)
+                    ref_dt, ref_cycles, ref_data = ref_data_for_sub_domain(ref_params)
+
+                    @root_test dt ≈ ref_dt atol=abs_tol(type) rtol=rel_tol(type)
+                    @root_test cycles == ref_cycles
+
+                    diff_count = count_differences(ref_params, host(data), ref_data)
+                    diff_count == 0
+                end skip=!enough_processes || !proc_in_grid
+            end
+        end
+
+
+        @testset "Conservation" begin
+            @testset "$test" for test in (:Sod, :Sod_y, :Sod_circ)
+                if enough_processes && proc_in_grid
+                    ref_params = ref_params_for_sub_domain(test, Float64, px, py; maxcycle=10000, maxtime=10000)
+
+                    data = ArmonDualData(ref_params)
+                    init_test(ref_params, data)
+
+                    init_mass, init_energy = conservation_vars(ref_params, data)
+                    time_loop(ref_params, data)
+                    end_mass, end_energy = conservation_vars(ref_params, data)
+                else
+                    init_mass, init_energy = 0., 0.
+                    end_mass,  end_energy  = 0., 0.
                 end
 
-                diff_count == 0
-            end skip=!enough_processes || !proc_in_grid
-
-            # TODO: mass + energy conservation tests
+                @root_test   init_mass ≈ end_mass    atol=1e-12  skip=!enough_processes
+                @root_test init_energy ≈ end_energy  atol=1e-12  skip=!enough_processes
+            end
         end
 
         # TODO: thread pinning tests (no overlaps, no gaps)

@@ -1,4 +1,5 @@
 
+# TODO: remove `async` from @kernel_options and `no_threading` kwarg
 
 @generic_kernel function boundaryConditions!(stencil_width::Int, stride::Int, i_start::Int, d::Int,
         u_factor::T, v_factor::T, rho::V, umat::V, vmat::V, pmat::V, cmat::V, gmat::V) where {T, V <: AbstractArray{T}}
@@ -63,25 +64,24 @@ end
 
 
 
-function read_border_array!(params::ArmonParameters{T}, data::ArmonData{V}, value_array::W, side::Symbol;
-        dependencies=NoneEvent(), no_threading=false) where {T, V <: AbstractArray{T}, W <: AbstractArray{T}}
+function read_border_array!(params::ArmonParameters, data::ArmonDualData, comm_array, side::Side;
+        dependencies=NoneEvent(), no_threading=false)
     (; nghost, nx, ny, row_length) = params
-    (; tmp_comm_array) = data
     @indexing_vars(params)
 
-    if side == :left
+    if side == Left
         main_range = @i(1, 1):row_length:@i(1, ny)
         inner_range = 1:nghost
         side_length = ny
-    elseif side == :right
+    elseif side == Right
         main_range = @i(nx-nghost+1, 1):row_length:@i(nx-nghost+1, ny)
         inner_range = 1:nghost
         side_length = ny
-    elseif side == :top
+    elseif side == Top
         main_range = @i(1, ny-nghost+1):row_length:@i(1, ny)
         inner_range = 1:nx
         side_length = nx
-    elseif side == :bottom
+    elseif side == Bottom
         main_range = @i(1, 1):row_length:@i(1, nghost)
         inner_range = 1:nx
         side_length = nx
@@ -90,39 +90,29 @@ function read_border_array!(params::ArmonParameters{T}, data::ArmonData{V}, valu
     end
 
     range = DomainRange(main_range, inner_range)
-    event = read_border_array!(params, data, range, side_length, tmp_comm_array;
-        dependencies, no_threading)
-
-    if params.use_gpu
-        # Copy `tmp_comm_array` from the GPU to the CPU in `value_array`
-        event = async_copy!(params.device, value_array, tmp_comm_array; dependencies=event)
-        event = @time_event_a "border_array" event
-    end
-
-    return event
+    return read_border_array!(params, device(data), range, side_length, comm_array; dependencies, no_threading)
 end
 
 
-function write_border_array!(params::ArmonParameters{T}, data::ArmonData{V}, value_array::W, side::Symbol;
-        dependencies=NoneEvent(), no_threading=false) where {T, V <: AbstractArray{T}, W <: AbstractArray{T}}
+function write_border_array!(params::ArmonParameters, data::ArmonDualData, comm_array, side::Side;
+        dependencies=NoneEvent(), no_threading=false)
     (; nghost, nx, ny, row_length) = params
-    (; tmp_comm_array) = data
     @indexing_vars(params)
 
     # Write the border array to the ghost cells of the data arrays
-    if side == :left
+    if side == Left
         main_range = @i(1-nghost, 1):row_length:@i(1-nghost, ny)
         inner_range = 1:nghost
         side_length = ny
-    elseif side == :right
+    elseif side == Right
         main_range = @i(nx+1, 1):row_length:@i(nx+1, ny)
         inner_range = 1:nghost
         side_length = ny
-    elseif side == :top
+    elseif side == Top
         main_range = @i(1, ny+1):row_length:@i(1, ny+nghost)
         inner_range = 1:nx
         side_length = nx
-    elseif side == :bottom
+    elseif side == Bottom
         main_range = @i(1, 1-nghost):row_length:@i(1, 0)
         inner_range = 1:nx
         side_length = nx
@@ -130,79 +120,93 @@ function write_border_array!(params::ArmonParameters{T}, data::ArmonData{V}, val
         error("Unknown side: $side")
     end
 
-    if params.use_gpu
-        # Copy `value_array` from the CPU to the GPU in `tmp_comm_array`
-        event = async_copy!(params.device, tmp_comm_array, value_array; dependencies)
-        event = @time_event_a "border_array" event
-    else
-        event = dependencies
-    end
-
     range = DomainRange(main_range, inner_range)
-    event = write_border_array!(params, data, range, side_length, tmp_comm_array; 
-        dependencies=event, no_threading)
-
-    return event
+    return write_border_array!(params, device(data), range, side_length, comm_array; dependencies, no_threading)
 end
 
 
-function exchange_with_neighbour(params::ArmonParameters{T}, array::V, neighbour_rank::Int) where {T, V <: AbstractArray{T}}
-    @perf_task "comms" "MPI_sendrecv" @time_expr_a "boundaryConditions!_MPI" MPI.Sendrecv!(array, 
-        neighbour_rank, 0, array, neighbour_rank, 0, params.cart_comm)
+function boundaryConditions!(params::ArmonParameters{T}, data::ArmonDualData, side::Side;
+        dependencies=NoneEvent(), no_threading=false) where T
+    if !has_neighbour(params, side)
+        # No neighbour: global domain boundary conditions
+        (u_factor::T, v_factor::T) = boundaryCondition(side, params.test)
+        (i_start, loop_range, stride, d) = boundary_conditions_indexes(params, side)
+
+        i_start -= stride  # Adjust for the fact that `@index_1D_lin()` is 1-indexed
+
+        return boundaryConditions!(params, device(data), loop_range, stride, i_start, d, 
+            u_factor, v_factor; dependencies, no_threading)
+    else
+        comm_array = device(data).work_array_1
+
+        # Exchange with the neighbour the cells on the side
+        dependencies = read_border_array!(params, data, comm_array, side; dependencies)
+        dependencies = copy_to_send_buffer!(data, comm_array, side; dependencies)
+
+        # Schedule the exchange to start when the copy is done
+        return Event(data.requests[side]; dependencies) do requests
+            MPI.Start(requests.send)
+            MPI.Start(requests.recv)
+        end
+    end
 end
 
 
-function boundaryConditions!(params::ArmonParameters{T}, data::ArmonData{V}, host_array::W; 
-        dependencies=NoneEvent(), no_threading=false) where {T, V <: AbstractArray{T}, W <: AbstractArray{T}}
-    (; neighbours, cart_coords) = params
+function boundaryConditions!(params::ArmonParameters, data::ArmonDualData, sides::Tuple{Vararg{Side}};
+        dependencies=NoneEvent())
     # TODO : use active RMA instead? => maybe but it will (maybe) not work with GPUs: 
     #   https://www.open-mpi.org/faq/?category=runcuda
     # TODO : use CUDA/ROCM-aware MPI
-    # TODO : use 4 views for each side for each variable ? (2 will be contiguous, 2 won't)
-    #   <- pre-calculate them!
-    # TODO : try to mix the comms: send to left and receive from right, then vice-versa. 
-    #  Maybe it can speed things up?    
 
-    # We only exchange the ghost domains along the current axis.
-    # even x/y coordinate in the cartesian process grid:
-    #   - send+receive left  or top
-    #   - send+receive right or bottom
-    # odd  x/y coordinate in the cartesian process grid:
-    #   - send+receive right or bottom
-    #   - send+receive left  or top
-    (cx, cy) = cart_coords
-    if params.current_axis == X_axis
-        if cx % 2 == 0
-            order = [:left, :right]
-        else
-            order = [:right, :left]
-        end
+    events = Event[]
+    for side in sides
+        push!(events, boundaryConditions!(params, data, side; dependencies))
+    end
+    dependencies = MultiEvent(tuple(events...))
+
+    if params.use_MPI && !params.async_comms
+        return post_boundary_conditions(params, data; dependencies)
+    end
+
+    return dependencies
+end
+
+
+function boundaryConditions!(params::ArmonParameters, data::ArmonDualData, sides::Symbol; dependencies=NoneEvent())
+    if sides === :outer_lb
+        side = params.current_axis == X_axis ? Left : Bottom
+        boundaryConditions!(params, data, (side,); dependencies)
+    elseif sides === :outer_rt
+        side = params.current_axis == X_axis ? Right : Top
+        boundaryConditions!(params, data, (side,); dependencies)
     else
-        if cy % 2 == 0
-            order = [:top, :bottom]
-        else
-            order = [:bottom, :top]
-        end
+        error("Unknown sides: $sides")
+    end
+end
+
+
+function boundaryConditions!(params::ArmonParameters, data::ArmonDualData; dependencies=NoneEvent())
+    boundaryConditions!(params, data, sides_along(params.current_axis); dependencies)
+end
+
+
+function post_boundary_conditions(params::ArmonParameters, data::ArmonDualData;
+        dependencies=NoneEvent())
+    !params.use_MPI && return dependencies
+
+    # Parallelize each wait and the work after each request completion
+
+    send_events = map(iter_send_requests(data)) do (_, send_request)
+        Event(MPI.Wait, send_request; dependencies)
     end
 
-    comm_array = params.use_gpu ? host_array : data.tmp_comm_array
-
-    prev_event = dependencies
-
-    for side in order
-        neighbour = neighbours[side]
-        if neighbour == MPI.PROC_NULL
-            prev_event = boundaryConditions!(params, data, side;
-                dependencies=prev_event, no_threading)
-        else
-            read_event = read_border_array!(params, data, comm_array, side; 
-                dependencies=prev_event, no_threading)
-            Event(exchange_with_neighbour, params, comm_array, neighbour; 
-                dependencies=read_event) |> wait
-            prev_event = write_border_array!(params, data, comm_array, side; 
-                no_threading)
-        end
+    recv_events = map(iter_recv_requests(data)) do (side, recv_request)
+        recv_deps = Event(MPI.Wait, recv_request; dependencies)
+        comm_array = device(data).work_array_1
+        recv_deps = copy_from_recv_buffer!(data, comm_array, side; dependencies=recv_deps)
+        recv_deps = write_border_array!(params, data, comm_array, side; dependencies=recv_deps)
+        return recv_deps
     end
 
-    return prev_event
+    return MultiEvent((send_events..., recv_events...))
 end

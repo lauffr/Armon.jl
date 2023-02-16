@@ -11,10 +11,10 @@ function get_reference_params(test::Symbol, type::Type; overriden_options...)
         :test => test, :scheme => :GAD, :projection => :euler_2nd, :riemann_limiter => :minmod,
         :nghost => 5, :nx => 100, :ny => 100,
         :cfl => 0,
-        :maxcycle => 1000, :maxtime => 0,  # Always run until reaching the default maximum time of the test
+        :maxcycle => 1000, :maxtime => 0,  # Always run until reaching the default maximum time of the test
         :silent => 5, :write_output => false, :measure_time => false,
-        :use_MPI => false,
-        :single_comm_per_axis_pass => false, :async_comms => false
+        :use_MPI => false, :async_comms => false
+        # TODO: disable SIMD + threading
     )
     merge!(ref_options, overriden_options)
     ArmonParameters(; ref_options...)
@@ -22,9 +22,9 @@ end
 
 
 function run_armon_reference(ref_params::ArmonParameters{T}) where T
-    data = ArmonData(T, ref_params.nbcell, ref_params.comm_array_size)
+    data = ArmonDualData(ref_params)
     init_test(ref_params, data)
-    dt, cycles, _, _ = time_loop(ref_params, data, data)
+    dt, cycles, _, _ = time_loop(ref_params, data)
     return dt, cycles, data
 end
 
@@ -35,15 +35,14 @@ function get_reference_data_file_name(test::TestCase, type::Type)
 end
 
 
-function write_reference_data(ref_params::ArmonParameters{T}, ref_file::IO, ref_data::ArmonData{V}, 
-        dt::T, cycles::Int) where {T, V <: AbstractArray{T}}
+function write_reference_data(ref_params::ArmonParameters{T}, ref_file::IO, ref_data::ArmonDualData, 
+        dt::T, cycles::Int) where T
     (; nx, ny) = ref_params
 
     @printf(ref_file, "%#.15g, %d\n", dt, cycles)
 
     col_range = 1:ny
     row_range = 1:nx
-    # ref_params.output_precision = 15
     write_data_to_file(ref_params, ref_data, col_range, row_range, ref_file)
 end
 
@@ -79,10 +78,9 @@ function count_differences(ref_params::ArmonParameters{T},
     @indexing_vars(ref_params)
 
     differences_count = 0
-    fields_to_compare = (:x, :y, :rho, :umat, :vmat, :pmat)
     for j in 1:ny
         row_range = @i(1,j):@i(nx,j)
-        for field in fields_to_compare
+        for field in saved_variables()
             ref_row = @view getfield(ref_data, field)[row_range]
             cur_row = @view getfield(data, field)[row_range]
             diff_count = sum(.~ isapprox.(ref_row, cur_row; atol, rtol))

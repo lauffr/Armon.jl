@@ -11,18 +11,18 @@ using ROCKernels
 using CUDA
 using CUDAKernels
 
-export ArmonParameters, armon, data_type
+export ArmonParameters, ArmonDualData, armon, data_type, memory_required
+export device_to_host!, host_to_device!, host, device, saved_variables, main_variables
 
 # TODO LIST
 # center the positions of the cells in the output file
 # Remove most generics : 'where {T, V <: AbstractVector{T}}' etc... when T and V are not used in the method. Omitting the 'where' will not change anything.
-# Bug: `conservation_vars` doesn't give correct values with MPI, even though the solution is correct
 # Bug: steps are not properly categorized and filtered at the output, giving wrong asynchronicity efficiency
 # Bug: some time measurements are incorrect on GPU
 # Result struct/dict which holds all measured values (+ data if needed)
-# Neighbour enum + `has_neighbour(params, side)` method
 # Rename some values in ArmonParameters & variables in ArmonData
-# ArmonDualData: two members, one for the device, one for the host. They are the same on CPU
+# Make a custom generic reduction kernel applicable on a domain, which allows to remove `domain_mask`
+# Monitor the removal of KA.jl's event system, and update the code accordingly
 
 """
     Axis
@@ -31,8 +31,19 @@ Enumeration of the axes of the domain
 """
 @enum Axis X_axis Y_axis
 
+
+"""
+    Side
+
+Enumeration of the sides of the domain
+"""
+@enum Side Left Right Bottom Top
+
+sides_along(dir::Axis) = dir == X_axis ? (Left, Right) : (Bottom, Top)
+
+
 # ROCKernels uses AMDGPU's ROCDevice, unlike CUDAKernels and KernelsAbstractions
-GPUDevice = Union{Device, ROCDevice}
+GenericDevice = Union{Device, ROCDevice}
 
 #
 # Performance tracking

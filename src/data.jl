@@ -7,101 +7,191 @@ Generic array holder for all variables and temporary variables used throughout t
 `Vector`, `CuArray` and `ROCArray` are all subtypes of `AbstractArray`.
 """
 struct ArmonData{V}
-    x::V
-    y::V
-    rho::V
-    umat::V
-    vmat::V
-    Emat::V
-    pmat::V
-    cmat::V
-    gmat::V
-    ustar::V
-    pstar::V
-    work_array_1::V
-    work_array_2::V
-    work_array_3::V
-    work_array_4::V
-    domain_mask::V
-    tmp_comm_array::V
+    x            :: V
+    y            :: V
+    rho          :: V
+    umat         :: V
+    vmat         :: V
+    Emat         :: V
+    pmat         :: V
+    cmat         :: V
+    gmat         :: V
+    ustar        :: V
+    pstar        :: V
+    work_array_1 :: V
+    work_array_2 :: V
+    work_array_3 :: V
+    work_array_4 :: V
+    domain_mask  :: V
 end
 
 
-function ArmonData(params::ArmonParameters{T}) where T
-    return ArmonData(T, params.nbcell, params.comm_array_size)
-end
+ArmonData(params::ArmonParameters{T}) where T = ArmonData(T, params.nbcell)
+ArmonData(type::Type, size::Int64) = ArmonData(Vector{type}, size)
 
-
-function ArmonData(type::Type, size::Int64, tmp_comm_size::Int64)
-    return ArmonData{Vector{type}}(
-        Vector{type}(undef, size),
-        Vector{type}(undef, size),
-        Vector{type}(undef, size),
-        Vector{type}(undef, size),
-        Vector{type}(undef, size),
-        Vector{type}(undef, size),
-        Vector{type}(undef, size),
-        Vector{type}(undef, size),
-        Vector{type}(undef, size),
-        Vector{type}(undef, size),
-        Vector{type}(undef, size),
-        Vector{type}(undef, size),
-        Vector{type}(undef, size),
-        Vector{type}(undef, size),
-        Vector{type}(undef, size),
-        Vector{type}(undef, size),
-        Vector{type}(undef, tmp_comm_size)
+function ArmonData(array::Type{V}, size::Int64) where {V <: AbstractArray}
+    return ArmonData{array}(
+        array(undef, size),
+        array(undef, size),
+        array(undef, size),
+        array(undef, size),
+        array(undef, size),
+        array(undef, size),
+        array(undef, size),
+        array(undef, size),
+        array(undef, size),
+        array(undef, size),
+        array(undef, size),
+        array(undef, size),
+        array(undef, size),
+        array(undef, size),
+        array(undef, size),
+        array(undef, size)
     )
 end
 
 
-function data_to_gpu(data::ArmonData{V}, device_array) where {T, V <: AbstractArray{T}}
-    return ArmonData{device_array{T}}(
-        device_array(data.x),
-        device_array(data.y),
-        device_array(data.rho),
-        device_array(data.umat),
-        device_array(data.vmat),
-        device_array(data.Emat),
-        device_array(data.pmat),
-        device_array(data.cmat),
-        device_array(data.gmat),
-        device_array(data.ustar),
-        device_array(data.pstar),
-        device_array(data.work_array_1),
-        device_array(data.work_array_2),
-        device_array(data.work_array_3),
-        device_array(data.work_array_4),
-        device_array(data.domain_mask),
-        device_array(data.tmp_comm_array)
-    )
-end
+main_variables() = (:x, :y, :rho, :umat, :vmat, :Emat, :pmat, :cmat, :gmat, :ustar, :pstar, :domain_mask)
+main_variables(data::ArmonData) = getfield.(data, main_variables())
+
+saved_variables() = (:x, :y, :rho, :umat, :vmat, :pmat)
+saved_variables(data::ArmonData) = map(f -> getfield(data, f), saved_variables())
 
 
-function data_from_gpu(host_data::ArmonData{V}, device_data::ArmonData{W}) where 
-        {T, V <: AbstractArray{T}, W <: AbstractArray{T}}
-    # We only need to copy the non-temporary arrays 
-    copyto!(host_data.x, device_data.x)
-    copyto!(host_data.y, device_data.y)
-    copyto!(host_data.rho, device_data.rho)
-    copyto!(host_data.umat, device_data.umat)
-    copyto!(host_data.vmat, device_data.vmat)
-    copyto!(host_data.Emat, device_data.Emat)
-    copyto!(host_data.pmat, device_data.pmat)
-    copyto!(host_data.cmat, device_data.cmat)
-    copyto!(host_data.gmat, device_data.gmat)
-    copyto!(host_data.ustar, device_data.ustar)
-    copyto!(host_data.pstar, device_data.pstar)
-end
+"""
+    memory_required(params::ArmonParameters)
 
+Compute the number of bytes needed on the device to allocate all data arrays
 
-function memory_required_for(params::ArmonParameters{T}) where T
-    return memory_required_for(params.nbcell, params.comm_array_size, T)
-end
+While the result is precise, it does not account for additional memory required by MPI buffers and
+the solver.
+"""
+memory_required(params::ArmonParameters{T}) where T = memory_required_for(params.nbcell, T)
 
-
-function memory_required_for(N, communication_array_size, float_type)
-    field_count = fieldcount(ArmonData{AbstractArray{float_type}})
-    floats = (field_count - 1) * N + communication_array_size
+function memory_required(N, float_type)
+    field_count = fieldcount(ArmonData{Vector{float_type}})
+    floats = field_count * N
     return floats * sizeof(float_type)
 end
+
+
+"""
+    ArmonDualData{DeviceArray, HostArray}
+
+Holds two version of `ArmonData`, one for the device and one for the host, as well as the buffers
+necessary for the halo exchange.
+
+If the host and device are the same, the `device` and `host` fields point to the same data.
+"""
+struct ArmonDualData{DeviceArray <: AbstractArray, HostArray <: AbstractArray}
+    device       :: GenericDevice
+    device_data  :: ArmonData{DeviceArray}
+    host_data    :: ArmonData{HostArray}
+    comm_buffers :: Dict{Side, NamedTuple{(:send, :recv), NTuple{2, MPI.Buffer{HostArray}}}}
+    requests     :: Dict{Side, NamedTuple{(:send, :recv), NTuple{2, MPI.AbstractRequest}}}
+end
+
+
+function ArmonDualData(params::ArmonParameters{T}) where T
+    device_array = get_device_array(params){T}
+    host_array = get_host_array(params){T}
+
+    device_data = ArmonData(device_array, params.nbcell)
+    if host_array == device_array
+        host_data = device_data
+    else
+        host_data = ArmonData(host_array, params.nbcell)
+    end
+
+    # In case we don't use MPI since there is no neighbours no array is allocated
+    comm_buffers = Dict{Side, NamedTuple{(:send, :recv), NTuple{2, MPI.Buffer{host_array}}}}()
+    requests = Dict{Side, NamedTuple{(:send, :recv), NTuple{2, MPI.AbstractRequest}}}()
+    for side in instances(Side)
+        has_neighbour(params, side) || continue
+        neighbour = neighbour_at(params, side)
+        comm_buffers[side] = (
+            send = MPI.Buffer(host_array(undef, params.comm_array_size)),
+            recv = MPI.Buffer(host_array(undef, params.comm_array_size))
+        )
+        requests[side] = (
+            send = MPI.Send_init(comm_buffers[side].send, params.cart_comm; dest=neighbour),
+            recv = MPI.Recv_init(comm_buffers[side].recv, params.cart_comm; source=neighbour)
+        )
+    end
+
+    return ArmonDualData{device_array, host_array}(params.device, device_data, host_data, comm_buffers, requests)
+end
+
+
+device_type(data::ArmonDualData) = data.device
+device(data::ArmonDualData) = data.device_data
+host(data::ArmonDualData) = data.host_data
+
+iter_send_requests(data::ArmonDualData) = 
+    Iterators.map(p -> first(p) => first(last(p)), 
+        Iterators.filter(!MPI.isnull ∘ first ∘ last, data.requests))
+
+iter_recv_requests(data::ArmonDualData) = 
+    Iterators.map(p -> first(p) => last(last(p)), 
+        Iterators.filter(!MPI.isnull ∘ last ∘ last, data.requests))
+
+
+"""
+    device_to_host!(data::ArmonDualData)
+
+Copies all `main_variables()` from the device to the host data. A no-op if the host is the device.
+"""
+device_to_host!(::ArmonDualData{D, D}) where D = nothing
+
+
+"""
+    host_to_device!(data::ArmonDualData)
+
+Copies all `main_variables()` from the host to the device data. A no-op if the host is the device.
+"""
+host_to_device!(::ArmonDualData{D, D}) where D = nothing
+
+
+function device_to_host!(data::ArmonDualData{D, H}) where {D, H}
+    for var in main_variables()
+        copyto!(getfield(host(data), var), getfield(device(data), var))
+    end
+end
+
+
+function host_to_device!(data::ArmonDualData{D, H}) where {D, H}
+    for var in main_variables()
+        copyto!(getfield(device(data), var), getfield(host(data), var))
+    end
+end
+
+
+function copy_to_send_buffer!(data::ArmonDualData{D, H}, array::D, side::Side; 
+        dependencies=NoneEvent()) where {D, H}
+    buffer_data = data.comm_buffers[side].send.data
+    copy_to_send_buffer!(data, array, buffer_data; dependencies)
+end
+
+
+function copy_to_send_buffer!(data::ArmonDualData{D, H}, array::D, buffer::H;
+        dependencies=NoneEvent()) where {D, H}
+    array_data = view(array, 1:length(buffer))
+    async_copy!(device_type(data), buffer, array_data; dependencies)
+end
+
+
+function copy_from_recv_buffer!(data::ArmonDualData{D, H}, array::D, side::Side;
+        dependencies=NoneEvent()) where {D, H}
+    buffer_data = data.comm_buffers[side].recv.data
+    copy_from_recv_buffer!(data, array, buffer_data; dependencies)
+end
+
+
+function copy_from_recv_buffer!(data::ArmonDualData{D, H}, array::D, buffer::H;
+        dependencies=NoneEvent()) where {D, H}
+    array_data = view(array, 1:length(buffer))
+    return async_copy!(device_type(data), array_data, buffer; dependencies)
+end
+
+
+ArmonDataOrDual = Union{ArmonData, ArmonDualData}

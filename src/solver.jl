@@ -1,14 +1,14 @@
 
 macro checkpoint(step_label)
-    esc(:(step_checkpoint(params, data, cpu_data, string($step_label); dependencies)))
+    esc(:(step_checkpoint(params, data, string($step_label); dependencies)))
 end
 
 
-function init_time_step(params::ArmonParameters, data::ArmonData, cpu_data::ArmonData)
+function init_time_step(params::ArmonParameters, data::ArmonDualData)
     if params.Dt == 0
         # No imposed initial time step, we must compute the first one manually
         update_EOS!(params, data, :full) |> wait
-        step_checkpoint(params, data, cpu_data, "update_EOS_init") && return true
+        step_checkpoint(params, data, "update_EOS_init") && return true
         time_step(params, data)
         params.curr_cycle_dt = params.next_cycle_dt
     else
@@ -20,22 +20,7 @@ function init_time_step(params::ArmonParameters, data::ArmonData, cpu_data::Armo
 end
 
 
-function solver_cycle(params::ArmonParameters, data::ArmonData, cpu_data::ArmonData, host_array::Vector; 
-        dependencies=NoneEvent())
-
-    # Future async structure:
-    # - update_EOS outer lb/rt
-    # - async BC (outer lb/rt)
-    # - update_EOS inner
-    # - fluxes inner
-    # - join async BC
-    # - fluxes outer lb/rt
-
-    # Sync structure:
-    # - update_EOS full
-    # - sync BC (outer lb/rt)
-    # - fluxes full
-
+function solver_cycle(params::ArmonParameters, data::ArmonDualData; dependencies=NoneEvent())
     time_step(params, data; dependencies)
 
     for (axis, dt_factor) in split_axes(params)
@@ -43,19 +28,38 @@ function solver_cycle(params::ArmonParameters, data::ArmonData, cpu_data::ArmonD
         update_steps_ranges(params)
         params.cycle_dt = params.curr_cycle_dt * dt_factor
 
-        dependencies = update_EOS!(params, data, :full; dependencies)
-        @checkpoint("update_EOS") && @goto stop
+        if params.async_comms
+            dependencies = update_EOS!(params, data, :outer_lb; dependencies)
+            dependencies = update_EOS!(params, data, :outer_rt; dependencies)
 
-        dependencies = boundaryConditions!(params, data, host_array; dependencies)
-        @checkpoint("boundaryConditions") && @goto stop
+            outer_lb_BC = boundaryConditions!(params, data, :outer_lb; dependencies)
+            outer_rt_BC = boundaryConditions!(params, data, :outer_rt; dependencies)
 
-        dependencies = numericalFluxes!(params, data, :full; dependencies)
-        @checkpoint("numericalFluxes") && @goto stop
+            dependencies = update_EOS!(params, data, :inner; dependencies)
+            dependencies = numericalFluxes!(params, data, :inner; dependencies)
+
+            dependencies = MultiEvent((dependencies, outer_lb_BC, outer_rt_BC))
+            dependencies = post_boundary_conditions(params, data; dependencies)
+
+            dependencies = numericalFluxes!(params, data, :outer_lb; dependencies)
+            dependencies = numericalFluxes!(params, data, :outer_rt; dependencies)
+
+            # TODO: async cellUpdate?
+        else
+            dependencies = update_EOS!(params, data, :full; dependencies)
+            @checkpoint("update_EOS") && @goto stop
+
+            dependencies = boundaryConditions!(params, data; dependencies)
+            @checkpoint("boundaryConditions") && @goto stop
+
+            dependencies = numericalFluxes!(params, data, :full; dependencies)
+            @checkpoint("numericalFluxes") && @goto stop
+        end
 
         @perf_task "loop" "cellUpdate" dependencies = cellUpdate!(params, data; dependencies)
         @checkpoint("cellUpdate") && @goto stop
 
-        @perf_task "loop" "euler_proj" dependencies = projection_remap!(params, data, host_array; dependencies)
+        @perf_task "loop" "euler_proj" dependencies = projection_remap!(params, data; dependencies)
         @checkpoint("projection_remap") && @goto stop
     end
 
@@ -66,18 +70,15 @@ function solver_cycle(params::ArmonParameters, data::ArmonData, cpu_data::ArmonD
 end
 
 
-function time_loop(params::ArmonParameters{T}, data::ArmonData{V},
-        cpu_data::ArmonData{W}) where {T, V <: AbstractArray{T}, W <: AbstractArray{T}}
+function time_loop(params::ArmonParameters, data::ArmonDualData)
     (; maxtime, maxcycle, nx, ny, silent, animation_step, is_root) = params
 
-    total_cycles_time::T = 0.
+    params.cycle = 0
+    params.time = 0
+    params.curr_cycle_dt = 0
+    params.next_cycle_dt = 0
 
-    if params.use_MPI && params.use_gpu
-        # Host version of temporary array used for MPI communications
-        host_array = Vector{T}(undef, params.comm_array_size)
-    else
-        host_array = Vector{T}()
-    end
+    total_cycles_time = 0.
 
     if silent <= 1
         initial_mass, initial_energy = conservation_vars(params, data)
@@ -86,7 +87,7 @@ function time_loop(params::ArmonParameters{T}, data::ArmonData{V},
     t1 = time_ns()
     t_warmup = t1
 
-    init_time_step(params, data, cpu_data) && @goto stop
+    init_time_step(params, data) && @goto stop
 
     dependencies = NoneEvent()
 
@@ -94,7 +95,7 @@ function time_loop(params::ArmonParameters{T}, data::ArmonData{V},
     while params.time < maxtime && params.cycle < maxcycle
         cycle_start = time_ns()
 
-        dependencies, stop = solver_cycle(params, data, cpu_data, host_array; dependencies)
+        dependencies, stop = solver_cycle(params, data; dependencies)
         stop && @goto stop
 
         if !is_warming_up()
@@ -164,7 +165,7 @@ function time_loop(params::ArmonParameters{T}, data::ArmonData{V},
         end
     end
 
-    return params.next_cycle_dt, params.cycle, convert(T, 1 / grind_time), total_cycles_time
+    return params.next_cycle_dt, params.cycle, 1 / grind_time, total_cycles_time
 end
 
 #
@@ -210,27 +211,14 @@ function armon(params::ArmonParameters{T}) where T
 
     # Allocate without initialisation in order to correctly map the NUMA space using the first-touch
     # policy when working on CPU only
-    @perf_task "init" "alloc" data = ArmonData(params)
+    @perf_task "init" "alloc" data = ArmonDualData(params)
     @perf_task "init" "init_test" wait(init_test(params, data))
 
-    if params.use_gpu
-        copy_time = @elapsed d_data = data_to_gpu(data, get_device_array(params))
-        (is_root && silent <= 2) && @printf("Time for copy to device: %.3g sec\n", copy_time)
+    @pretty_time dt, cycles, cells_per_sec, total_time = time_loop(params, data)
 
-        @pretty_time dt, cycles, cells_per_sec, total_time = time_loop(params, d_data, data)
-
-        data_from_gpu(data, d_data)
-    else
-        @pretty_time dt, cycles, cells_per_sec, total_time = time_loop(params, data, data)
-    end
-
-    if params.write_output
-        write_sub_domain_file(params, data, params.output_file)
-    end
-
-    if params.write_slices
-        write_slices_files(params, data, params.output_file)
-    end
+    params.use_gpu && device_to_host!(data)
+    params.write_output && write_sub_domain_file(params, data, params.output_file)
+    params.write_slices && write_slices_files(params, data, params.output_file)
 
     sorted_time_contrib = sort(collect(total_time_contrib))
 

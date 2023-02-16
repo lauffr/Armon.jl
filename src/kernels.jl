@@ -218,11 +218,10 @@ end
         row_length::Int, nghost::Int, nx::Int, ny::Int, 
         domain_size::NTuple{2, T}, origin::NTuple{2, T},
         cart_coords::NTuple{2, Int}, global_grid::NTuple{2, Int},
-        single_comm_per_axis_pass::Bool, extra_ring_width::Int,
         x::V, y::V, rho::V, Emat::V, umat::V, vmat::V, 
         domain_mask::V, pmat::V, cmat::V, ustar::V, pstar::V, 
         test_case::Test) where {T, V <: AbstractArray{T}, Test <: TwoStateTestCase}
-    @kernel_options(add_time, label=init_test, no_gpu)
+    @kernel_options(add_time, label=init_test)
 
     i = @index_1D_lin()
 
@@ -235,8 +234,6 @@ end
         # Position of the origin of this sub-domain
         pos_x = cx * nx
         pos_y = cy * ny
-
-        r = extra_ring_width
 
         (gamma::T,
             high_ρ::T, low_ρ::T,
@@ -270,17 +267,10 @@ end
         vmat[i] = low_v
     end
 
-    # Set the domain mask to 1 if the cell should be computed or 0 otherwise
-    if single_comm_per_axis_pass
-        domain_mask[i] = (
-               (-r ≤   ix < nx+r && -r ≤   iy < ny+r)  # Include as well a ring of ghost cells...
-            && ( 0 ≤   ix < nx   ||  0 ≤   iy < ny  )  # ...while excluding the corners of the sub-domain...
-            && ( 0 ≤ g_ix < g_nx &&  0 ≤ g_iy < g_ny)  # ...and only if it is in the global domain
-        ) ? 1 : 0
-    else
-        domain_mask[i] = (0 ≤ ix < nx && 0 ≤ iy < ny) ? 1 : 0
-    end
+    # Set the domain mask to 1 if the cell is real or 0 otherwise
+    domain_mask[i] = (0 ≤ ix < nx && 0 ≤ iy < ny) ? 1 : 0
 
+    # TODO: remove this as it should be unnecessary now
     # Set to zero to make sure no non-initialized values changes the result
     pmat[i] = 0
     cmat[i] = 1  # Set to 1 as a max speed of 0 will create NaNs
@@ -309,19 +299,19 @@ end
 # Wrappers
 #
 
-function numericalFluxes!(params::ArmonParameters{T}, data::ArmonData{V}, 
-        range::DomainRange, label::Symbol;
-        dependencies=NoneEvent(), no_threading=false) where {T, V <: AbstractArray{T}}
+function numericalFluxes!(params::ArmonParameters, data::ArmonDualData, 
+        range::DomainRange, label::Symbol; dependencies=NoneEvent(), no_threading=false)
     dt = params.cycle_dt
-    u = params.current_axis == X_axis ? data.umat : data.vmat
+    d_data = device(data)
+    u = params.current_axis == X_axis ? d_data.umat : d_data.vmat
     if params.riemann == :acoustic  # 2-state acoustic solver (Godunov)
         if params.scheme == :Godunov
             step_label = "acoustic_$(label)!"
-            return acoustic!(params, data, step_label, range, data.ustar, data.pstar, u; 
+            return acoustic!(params, d_data, step_label, range, d_data.ustar, d_data.pstar, u; 
                 dependencies, no_threading)
         elseif params.scheme == :GAD
             step_label = "acoustic_GAD_$(label)!"
-            return acoustic_GAD!(params, data, step_label, range, dt, u, params.riemann_limiter; 
+            return acoustic_GAD!(params, d_data, step_label, range, dt, u, params.riemann_limiter; 
                 dependencies, no_threading)
         else
             error("Unknown acoustic scheme: ", params.scheme)
@@ -332,8 +322,8 @@ function numericalFluxes!(params::ArmonParameters{T}, data::ArmonData{V},
 end
 
 
-function numericalFluxes!(params::ArmonParameters{T}, data::ArmonData{V}, label::Symbol;
-        dependencies=NoneEvent(), no_threading=false) where {T, V <: AbstractArray{T}}
+function numericalFluxes!(params::ArmonParameters, data::ArmonDualData, label::Symbol;
+        dependencies=NoneEvent(), no_threading=false)
     (; steps_ranges) = params
 
     if label == :inner
@@ -371,7 +361,7 @@ function update_EOS!(params::ArmonParameters, data::ArmonData, ::Bizarrium,
 end
 
 
-function update_EOS!(params::ArmonParameters, data::ArmonData, label::Symbol;
+function update_EOS!(params::ArmonParameters, data::ArmonDualData, label::Symbol;
         dependencies=NoneEvent(), no_threading=false)
     (; steps_ranges) = params
 
@@ -391,33 +381,20 @@ function update_EOS!(params::ArmonParameters, data::ArmonData, label::Symbol;
         error("Wrong region label: $label")
     end
 
-    return update_EOS!(params, data, params.test, range, label; dependencies, no_threading)
+    return update_EOS!(params, device(data), params.test, range, label; dependencies, no_threading)
 end
 
 
-function init_test(params::ArmonParameters, data::ArmonData)
-    return init_test(params, data, 1:params.nbcell, params.test)
+function init_test(params::ArmonParameters, data::ArmonDualData)
+    return init_test(params, device(data), 1:params.nbcell, params.test)
 end
 
 
-function boundaryConditions!(params::ArmonParameters{T}, data::ArmonData{V}, side::Symbol;
-        dependencies=NoneEvent(), no_threading=false) where {T, V <: AbstractArray{T}}
-
-    (u_factor::T, v_factor::T) = boundaryCondition(side, params.test)
-    (i_start, loop_range, stride, d) = boundary_conditions_indexes(params, side)
-
-    i_start -= stride  # Adjust for the fact that `@index_1D_lin()` is 1-indexed
-
-    return boundaryConditions!(params, data, loop_range, stride, i_start, d, u_factor, v_factor; 
-        dependencies, no_threading)
-end
-
-
-function cellUpdate!(params::ArmonParameters{T}, data::ArmonData{V};
-        dependencies=NoneEvent()) where {T, V <: AbstractArray{T}}
+function cellUpdate!(params::ArmonParameters, data::ArmonDualData; dependencies=NoneEvent())
     range = params.steps_ranges.cell_update
-    u = params.current_axis == X_axis ? data.umat : data.vmat
-    return cell_update!(params, data, range, params.cycle_dt, u; dependencies)
+    d_data = device(data)
+    u = params.current_axis == X_axis ? d_data.umat : d_data.vmat
+    return cell_update!(params, d_data, range, params.cycle_dt, u; dependencies)
 end
 
 
@@ -429,19 +406,9 @@ function slope_minmod(uᵢ₋::T, uᵢ::T, uᵢ₊::T, r₋::T, r₊::T) where T
 end
 
 
-function projection_remap!(params::ArmonParameters{T}, data::ArmonData{V}, host_array::W;
-        dependencies=NoneEvent()) where {T, V <: AbstractArray{T}, W <: AbstractArray{T}}
-    params.projection == :none && return dependencies
-
-    if params.use_MPI && !params.single_comm_per_axis_pass
-        # Additional communications phase needed to get the new values of the lagrangian cells
-        # TODO: put this outside of the function
-        # TODO: this should be done also in the non-MPI case, because of cellUpdate! changing more
-        #  cells that it should.
-        dependencies = boundaryConditions!(params, data, host_array; dependencies)
-    end
-
-    (; work_array_1, work_array_2, work_array_3, work_array_4) = data
+function projection_remap!(params::ArmonParameters, data::ArmonDualData; dependencies=NoneEvent())
+    d_data = device(data)
+    (; work_array_1, work_array_2, work_array_3, work_array_4) = d_data
     advection_ρ  = work_array_1
     advection_uρ = work_array_2
     advection_vρ = work_array_3
@@ -451,16 +418,16 @@ function projection_remap!(params::ArmonParameters{T}, data::ArmonData{V}, host_
     projection_range = params.steps_ranges.projection
 
     if params.projection == :euler
-        event = first_order_euler_remap!(params, data, advection_range, params.cycle_dt,
+        event = first_order_euler_remap!(params, d_data, advection_range, params.cycle_dt,
             advection_ρ, advection_uρ, advection_vρ, advection_Eρ; dependencies)
     elseif params.projection == :euler_2nd
-        event = second_order_euler_remap!(params, data, advection_range, params.cycle_dt,
+        event = second_order_euler_remap!(params, d_data, advection_range, params.cycle_dt,
             advection_ρ, advection_uρ, advection_vρ, advection_Eρ; dependencies)
     else
         error("Unknown projection scheme: $(params.projection)")
     end
 
-    return euler_projection!(params, data, projection_range, params.cycle_dt,
+    return euler_projection!(params, d_data, projection_range, params.cycle_dt,
         advection_ρ, advection_uρ, advection_vρ, advection_Eρ; dependencies=event)
 end
 
@@ -526,8 +493,7 @@ function local_time_step(params::ArmonParameters{T}, data::ArmonData{V}, prev_dt
 end
 
 
-function time_step(params::ArmonParameters{T}, data::ArmonData{V};
-        dependencies=NoneEvent()) where {T, V <: AbstractArray{T}}
+function time_step(params::ArmonParameters, data::ArmonDualData; dependencies=NoneEvent())
     (; Dt, dt_on_even_cycles, cycle, cst_dt, is_root, cart_comm) = params
 
     params.curr_cycle_dt = params.next_cycle_dt
@@ -536,14 +502,14 @@ function time_step(params::ArmonParameters{T}, data::ArmonData{V};
         params.next_cycle_dt = Dt
     elseif !dt_on_even_cycles || iseven(cycle) || params.curr_cycle_dt == 0
         @perf_task "loop" "local_time_step" begin
-            local_dt = @time_expr_c local_time_step(params, data, params.curr_cycle_dt; dependencies)
+            local_dt = @time_expr_c local_time_step(params, device(data), params.curr_cycle_dt; dependencies)
         end
 
         if params.use_MPI
             @perf_task "comms" "MPI_dt" @time_expr_c "dt_Allreduce_MPI" begin
                 # TODO: use a non-blocking IAllreduce, which would then be probed at the end of a cycle
                 #  however, we need to implement IAllreduce ourselves, since MPI.jl doesn't have a nice API for it (make a PR?)
-                next_dt = MPI.Allreduce(local_dt, MPI.Op(min, T), cart_comm)
+                next_dt = MPI.Allreduce(local_dt, MPI.Op(min, data_type(params)), cart_comm)
             end
         else
             next_dt = local_dt
@@ -560,9 +526,9 @@ function time_step(params::ArmonParameters{T}, data::ArmonData{V};
 end
 
 
-function conservation_vars(params::ArmonParameters{T}, data::ArmonData{V}) where {T, V <: AbstractArray{T}}
-    (; rho, Emat, domain_mask, x, y) = data
-    (; ideb, ifin, dx, row_length) = params
+function conservation_vars(params::ArmonParameters{T}, data::ArmonDualData) where T
+    (; rho, Emat, domain_mask) = device(data)
+    (; ideb, ifin, dx) = params
 
     total_mass::T = zero(T)
     total_energy::T = zero(T)

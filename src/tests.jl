@@ -97,18 +97,18 @@ function init_test_params(p::Sedov{T}) where T
     )
 end
 
-function boundaryCondition(side::Symbol, ::Union{Sod, Bizarrium})::NTuple{2, Int}
-    return (side == :left || side == :right) ? (-1, 1) : (1, 1)
+function boundaryCondition(side::Side, ::Union{Sod, Bizarrium})::NTuple{2, Int}
+    return (side == Left || side == Right) ? (-1, 1) : (1, 1)
 end
 
-function boundaryCondition(side::Symbol, ::Sod_y)::NTuple{2, Int}
-    return (side == :left || side == :right) ? (1, 1) : (1, -1)
+function boundaryCondition(side::Side, ::Sod_y)::NTuple{2, Int}
+    return (side == Left || side == Right) ? (1, 1) : (1, -1)
 end
 
-function boundaryCondition(side::Symbol, ::Sod_circ)::NTuple{2, Int}
-    return (side == :left || side == :right) ? (-1, 1) : (1, -1)
+function boundaryCondition(side::Side, ::Sod_circ)::NTuple{2, Int}
+    return (side == Left || side == Right) ? (-1, 1) : (1, -1)
 end
 
-function boundaryCondition(::Symbol, ::Sedov)::NTuple{2, Int}
+function boundaryCondition(::Side, ::Sedov)::NTuple{2, Int}
     return (1, 1)
 end

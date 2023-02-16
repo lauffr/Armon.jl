@@ -72,7 +72,7 @@ mutable struct ArmonParameters{Flt_T}
     use_threading::Bool
     use_simd::Bool
     use_gpu::Bool
-    device::GPUDevice
+    device::GenericDevice
     block_size::Int
 
     # MPI
@@ -84,14 +84,10 @@ mutable struct ArmonParameters{Flt_T}
     proc_dims::NTuple{2, Int}
     cart_comm::MPI.Comm
     cart_coords::NTuple{2, Int}  # Coordinates of this process in the cartesian grid
-    neighbours::NamedTuple{(:top, :bottom, :left, :right), NTuple{4, Int}}  # Ranks of the neighbours of this process
+    neighbours::NamedTuple{(:left, :right, :bottom, :top), NTuple{4, Int}}  # Ranks of the neighbours of this process
     global_grid::NTuple{2, Int}  # Dimensions (nx, ny) of the global grid
-    single_comm_per_axis_pass::Bool
-    extra_ring_width::Int  # Number of cells to compute additionally when 'single_comm_per_axis_pass' is true
     reorder_grid::Bool
     comm_array_size::Int
-
-    # Asynchronicity
     async_comms::Bool
 
     # Tests & Comparison
@@ -118,9 +114,7 @@ function ArmonParameters(;
         hw_counters_options = nothing, hw_counters_output = nothing,
         use_threading = true, use_simd = true,
         use_gpu = false, device = :CUDA, block_size = 1024,
-        use_MPI = true, px = 1, py = 1,
-        single_comm_per_axis_pass = false, reorder_grid = true,
-        async_comms = false,
+        use_MPI = true, px = 1, py = 1, reorder_grid = true, async_comms = false,
         compare = false, is_ref = false, comparison_tolerance = 1e-10,
         return_data = false
     )
@@ -157,7 +151,6 @@ function ArmonParameters(;
 
     min_nghost = 1
     min_nghost += (scheme != :Godunov)
-    min_nghost += single_comm_per_axis_pass
     min_nghost += (projection == :euler_2nd)
 
     if nghost < min_nghost
@@ -196,8 +189,8 @@ function ArmonParameters(;
         error("Expected a TestCase type or a symbol, got: $test")
     end
 
-    if single_comm_per_axis_pass
-        error("single_comm_per_axis_pass=true is broken")
+    if compare && async_comms
+        error("Cannot compare when using asynchronous communications")
     end
 
     # MPI
@@ -213,10 +206,10 @@ function ArmonParameters(;
         (cx, cy) = MPI.Cart_coords(C_COMM)
 
         neighbours = (
-            top    = MPI.Cart_shift(C_COMM, 1,  1)[2],
-            bottom = MPI.Cart_shift(C_COMM, 1, -1)[2],
             left   = MPI.Cart_shift(C_COMM, 0, -1)[2],
-            right  = MPI.Cart_shift(C_COMM, 0,  1)[2]
+            right  = MPI.Cart_shift(C_COMM, 0,  1)[2],
+            bottom = MPI.Cart_shift(C_COMM, 1, -1)[2],
+            top    = MPI.Cart_shift(C_COMM, 1,  1)[2]
         )
     else
         rank = 0
@@ -224,10 +217,10 @@ function ArmonParameters(;
         C_COMM = COMM
         (cx, cy) = (0, 0)
         neighbours = (
-            top    = MPI.PROC_NULL,
-            bottom = MPI.PROC_NULL,
             left   = MPI.PROC_NULL,
-            right  = MPI.PROC_NULL
+            right  = MPI.PROC_NULL,
+            bottom = MPI.PROC_NULL,
+            top    = MPI.PROC_NULL
         )
     end
 
@@ -300,14 +293,6 @@ function ArmonParameters(;
     idx_row = row_length
     idx_col = 1
 
-    # Ring width
-    if single_comm_per_axis_pass
-        extra_ring_width = 1
-        extra_ring_width += projection == :euler_2nd
-    else
-        extra_ring_width = 0
-    end
-
     if use_MPI
         comm_array_size = max(nx, ny) * nghost * 7
     else
@@ -340,8 +325,7 @@ function ArmonParameters(;
 
         use_MPI, is_root, rank, root_rank,
         proc_size, (px, py), C_COMM, (cx, cy), neighbours, (g_nx, g_ny),
-        single_comm_per_axis_pass, extra_ring_width, reorder_grid, comm_array_size,
-
+        reorder_grid, comm_array_size,
         async_comms,
 
         compare, is_ref, comparison_tolerance
@@ -409,7 +393,6 @@ function print_parameters(p::ArmonParameters{T}) where T
     println(" - global:     ", p.global_grid[1], "×", p.global_grid[2])
     println(" - proc grid:  ", p.proc_dims[1], "×", p.proc_dims[2], " ($(p.reorder_grid ? "" : "not ")reordered)")
     println(" - coords:     ", p.cart_coords[1], "×", p.cart_coords[2], " (rank: ", p.rank, "/", p.proc_size-1, ")")
-    println(" - comms per axis: ", p.single_comm_per_axis_pass ? 1 : 2)
     println(" - asynchronous communications: ", p.async_comms)
     println(" - measure step times: ", p.measure_time)
     if p.measure_hw_counters
@@ -437,19 +420,33 @@ Get `T`, the type used for numbers by the solver
 data_type(::ArmonParameters{T}) where T = T
 
 
+neighbour_at(params::ArmonParameters, side::Side) = params.neighbours[Int(side) + 1]
+
+has_neighbour(params::ArmonParameters, side::Side) = neighbour_at(params, side) ≠ MPI.PROC_NULL
+
+neighbour_count(params::ArmonParameters) = count(≥(0), params.neighbours)
+neighbour_count(params::ArmonParameters, dir::Axis) = count(≥(0), neighbour_at.(params, sides_along(dir)))
+
+function grid_coord_along(params::ArmonParameters, dir::Axis = params.current_axis)
+    dir == X_axis ? params.cart_coords[1] : params.cart_coords[2]
+end
+
+
 # Default copy method
 function Base.copy(p::ArmonParameters{T}) where T
     return ArmonParameters([getfield(p, k) for k in fieldnames(ArmonParameters{T})]...)
 end
 
 
+get_host_array(::ArmonParameters) = Vector
+
 function get_device_array(params::ArmonParameters)
-    if params.device == CUDADevice()
+    if params.device isa CUDADevice
         return CuArray
-    elseif params.device == ROCDevice()
+    elseif params.device isa ROCDevice
         return ROCArray
-    else  # params.device == CPU()
-        return Array
+    else  # params.device isa CPU
+        return Vector
     end
 end
 
@@ -571,29 +568,29 @@ function update_steps_ranges(params::ArmonParameters)
 end
 
 
-function boundary_conditions_indexes(params::ArmonParameters, side::Symbol)
+function boundary_conditions_indexes(params::ArmonParameters, side::Side)
     (; row_length, nx, ny) = params
     @indexing_vars(params)
 
     stride::Int = 1
     d::Int = 1
 
-    if side == :left
+    if side == Left
         stride = row_length
         i_start = @i(0,1)
         loop_range = 1:ny
         d = 1
-    elseif side == :right
+    elseif side == Right
         stride = row_length
         i_start = @i(nx+1,1)
         loop_range = 1:ny
         d = -1
-    elseif side == :top
+    elseif side == Top
         stride = 1
         i_start = @i(1,ny+1)
         loop_range = 1:nx
         d = -row_length
-    elseif side == :bottom
+    elseif side == Bottom
         stride = 1
         i_start = @i(1,0)
         loop_range = 1:nx

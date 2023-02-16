@@ -7,13 +7,12 @@ function cmp_cpu_with_reference(test::Symbol, type::Type; options...)
     ref_params = get_reference_params(test, type; options...)
     dt, cycles, data = run_armon_reference(ref_params)
     T = data_type(ref_params)
-    ref_data = ArmonData(T, ref_params.nbcell, ref_params.comm_array_size)
+    ref_data = ArmonData(ref_params)
 
-    differences_count = compare_with_reference_data(ref_params, dt, cycles, data, ref_data)
+    differences_count = compare_with_reference_data(ref_params, dt, cycles, host(data), ref_data)
 
     if differences_count > 0 && WRITE_FAILED
         file_name = "test_$(test_name(ref_params.test))_$(T)"
-        ref_params.single_comm_per_axis_pass && (file_name *= "_single_comm")
         write_sub_domain_file(ref_params, data, file_name; no_msg=true)
     end
 
@@ -24,30 +23,32 @@ end
 function uninit_vars_propagation(test, type)
     ref_params = get_reference_params(test, type)
 
-    data = ArmonData(data_type(ref_params), ref_params.nbcell, ref_params.comm_array_size)
+    data = ArmonDualData(ref_params)
     init_test(ref_params, data)
 
+    mask = host(data).domain_mask
+    big_val = type == Float32 ? 1e30 : 1e100
     for i in 1:ref_params.nbcell
-        data.domain_mask == 0 || continue
-        rho[i]  = 1e30
-        Emat[i] = 1e30
-        umat[i] = 1e30
-        vmat[i] = 1e30
-        pmat[i] = 1e30
-        cmat[i] = 1e30
-        ustar[i] = 1e30
-        pstar[i] = 1e30
-        work_array_1[i] = 1e30
-        work_array_2[i] = 1e30
-        work_array_3[i] = 1e30
-        work_array_4[i] = 1e30
+        mask == 0 || continue
+        rho[i]  = big_val
+        Emat[i] = big_val
+        umat[i] = big_val
+        vmat[i] = big_val
+        pmat[i] = big_val
+        cmat[i] = big_val
+        ustar[i] = big_val
+        pstar[i] = big_val
+        work_array_1[i] = big_val
+        work_array_2[i] = big_val
+        work_array_3[i] = big_val
+        work_array_4[i] = big_val
     end
 
-    dt, cycles, _, _ = time_loop(ref_params, data, data)
+    dt, cycles, _, _ = time_loop(ref_params, data)
 
-    ref_data = ArmonData(data_type(ref_params), ref_params.nbcell, ref_params.comm_array_size)
+    ref_data = ArmonData(ref_params)
 
-    return compare_with_reference_data(ref_params, dt, cycles, data, ref_data)
+    return compare_with_reference_data(ref_params, dt, cycles, host(data), ref_data)
 end
 
 
@@ -60,19 +61,19 @@ end
         end
     end
 
-    @testset "Single boundary condition per pass" begin
-        @testset "$test" for test in (:Sod, :Sod_y, :Sod_circ, :Bizarrium, :Sedov)
-            @test begin
-                diff = cmp_cpu_with_reference(test, Float64; single_comm_per_axis_pass=true)
-                diff == 0
-            end skip=true  # TODO: all tests are broken since the indexing is still not 100% correct
-        end
-    end
-
     @testset "Uninitialized values propagation" begin
         @test begin
             diff = uninit_vars_propagation(:Sedov, Float64)
             diff == 0
+        end
+    end
+
+    @testset "Async code path" begin
+        @testset "$test" for test in (:Sod, :Sod_y, :Sod_circ, :Bizarrium, :Sedov)
+            @test begin
+                diff = cmp_cpu_with_reference(test, Float64; async_comms=true, use_MPI=false)
+                diff == 0
+            end
         end
     end
 end

@@ -1,9 +1,9 @@
 
-function write_data_to_file(params::ArmonParameters, data::ArmonData,
+function write_data_to_file(params::ArmonParameters, data::ArmonDataOrDual,
         col_range, row_range, file; direct_indexing=false, for_3D=true)
     @indexing_vars(params)
 
-    vars_to_write = [data.x, data.y, data.rho, data.umat, data.vmat, data.pmat]
+    vars_to_write = saved_variables(data isa ArmonDualData ? host(data) : data)
 
     p = params.output_precision
     format = Printf.Format(join(repeat(["%#$(p+7).$(p)e"], length(vars_to_write)), ", ") * "\n")
@@ -18,6 +18,7 @@ function write_data_to_file(params::ArmonParameters, data::ArmonData,
 
             Printf.format(file, format, getindex.(vars_to_write, idx)...)
         end
+
         for_3D && println(file)  # Separate rows to use pm3d plotting with gnuplot
     end
 end
@@ -41,7 +42,7 @@ function build_file_path(params::ArmonParameters, file_name::String)
 end
 
 
-function write_sub_domain_file(params::ArmonParameters, data::ArmonData, file_name::String; no_msg=false)
+function write_sub_domain_file(params::ArmonParameters, data::ArmonDataOrDual, file_name::String; no_msg=false)
     (; silent, nx, ny, is_root, nghost) = params
 
     output_file_path = build_file_path(params, file_name)
@@ -63,7 +64,7 @@ function write_sub_domain_file(params::ArmonParameters, data::ArmonData, file_na
 end
 
 
-function write_slices_files(params::ArmonParameters, data::ArmonData, file_name::String; no_msg=false)
+function write_slices_files(params::ArmonParameters, data::ArmonDataOrDual, file_name::String; no_msg=false)
     (; output_dir, silent, nx, ny, use_MPI, is_root, cart_comm, global_grid, proc_dims, cart_coords) = params
 
     if is_root && !isdir(output_dir)
@@ -123,11 +124,11 @@ function write_slices_files(params::ArmonParameters, data::ArmonData, file_name:
 end
 
 
-function read_data_from_file(params::ArmonParameters{T}, data::ArmonData{V},
-        col_range, row_range, file; direct_indexing=false) where {T, V <: AbstractArray{T}}
+function read_data_from_file(params::ArmonParameters{T}, data::ArmonDataOrDual,
+        col_range, row_range, file; direct_indexing=false) where T
     @indexing_vars(params)
 
-    vars_to_read = [data.x, data.y, data.rho, data.umat, data.vmat, data.pmat]
+    vars_to_read = saved_variables(data isa ArmonDualData ? host(data) : data)
 
     for j in col_range
         for i in row_range
@@ -146,7 +147,7 @@ function read_data_from_file(params::ArmonParameters{T}, data::ArmonData{V},
 end
 
 
-function read_sub_domain_file!(params::ArmonParameters, data::ArmonData, file_name::String)
+function read_sub_domain_file!(params::ArmonParameters, data::ArmonDataOrDual, file_name::String)
     (; nx, ny, nghost) = params
 
     file_path = build_file_path(params, file_name)
@@ -167,12 +168,12 @@ end
 # Comparison functions
 #
 
-function compare_data(label::String, params::ArmonParameters{T}, 
-        ref_data::ArmonData{V}, our_data::ArmonData{V}; mask=nothing) where {T, V <: AbstractArray{T}}
+function compare_data(label::String, params::ArmonParameters,
+        ref_data::ArmonData{V}, our_data::ArmonData{V}; mask=nothing) where V
     (; row_length, nghost, nbcell, comparison_tolerance) = params
     different = false
-    fields_to_compare = (:x, :y, :rho, :umat, :vmat, :pmat)
-    for name in fields_to_compare
+
+    for name in saved_variables()
         ref_val = getfield(ref_data, name)
         our_val = getfield(our_data, name)
 
@@ -185,7 +186,7 @@ function compare_data(label::String, params::ArmonParameters{T},
             !different && println("At $label:")
             different = true
             print("$diff_count differences found in $name")
-            if diff_count < 201
+            if diff_count ≤ 200
                 println(" (ref ≢ current)")
                 for idx in 1:nbcell
                     !diff_mask[idx] && continue
@@ -198,6 +199,7 @@ function compare_data(label::String, params::ArmonParameters{T},
             end
         end
     end
+
     return different
 end
 
@@ -205,7 +207,7 @@ end
 function domain_mask_with_ghosts(params::ArmonParameters{T}, mask::V) where {T, V <: AbstractArray{T}}
     (; nbcell, nx, ny, nghost, row_length) = params
 
-    r = params.extra_ring_width + nghost
+    r = nghost
     axis = params.current_axis
 
     for i in 1:nbcell
@@ -222,9 +224,10 @@ function domain_mask_with_ghosts(params::ArmonParameters{T}, mask::V) where {T, 
 end
 
 
-function compare_with_file(params::ArmonParameters{T}, 
-        data::ArmonData{V}, file_name::String, label::String) where {T, V <: AbstractArray{T}}
-    ref_data = ArmonData(T, params.nbcell, params.comm_array_size)
+function compare_with_file(params::ArmonParameters, data::ArmonData,
+        file_name::String, label::String)
+
+    ref_data = ArmonData(params)
     read_sub_domain_file!(params, ref_data, file_name)
 
     if params.use_MPI && params.write_ghosts
@@ -242,28 +245,22 @@ function compare_with_file(params::ArmonParameters{T},
 end
 
 
-function step_checkpoint(params::ArmonParameters{T}, 
-        data::ArmonData{V}, cpu_data::ArmonData{W},
-        step_label::String;
-        dependencies=NoneEvent()) where {T, V <: AbstractArray{T}, W <: AbstractArray{T}}
+function step_checkpoint(params::ArmonParameters, data::ArmonDualData, step_label::String; dependencies=NoneEvent())
     if params.compare
         wait(dependencies)
 
-        if W != V
-            data_from_gpu(cpu_data, data)
-        else
-            cpu_data = data
-        end
+        device_to_host!(data)
+        h_data = host(data)
 
         step_file_name = params.output_file * @sprintf("_%03d_%s", params.cycle, step_label)
         step_file_name *= isnothing(params.axis) ? "" : "_" * string(params.axis)[1:1]
 
         if params.is_ref
-            write_sub_domain_file(params, cpu_data, step_file_name; no_msg=true)
+            write_sub_domain_file(params, h_data, step_file_name; no_msg=true)
         else
-            different = compare_with_file(params, cpu_data, step_file_name, step_label)
+            different = compare_with_file(params, h_data, step_file_name, step_label)
             if different
-                write_sub_domain_file(params, cpu_data, step_file_name * "_diff"; no_msg=true)
+                write_sub_domain_file(params, h_data, step_file_name * "_diff"; no_msg=true)
                 println("Difference file written to $(step_file_name)_diff")
             end
             return different
