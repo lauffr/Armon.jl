@@ -24,27 +24,6 @@ export device_to_host!, host_to_device!, host, device, saved_variables, main_var
 # Make a custom generic reduction kernel applicable on a domain, which allows to remove `domain_mask`
 # Monitor the removal of KA.jl's event system, and update the code accordingly
 
-"""
-    Axis
-
-Enumeration of the axes of the domain
-"""
-@enum Axis X_axis Y_axis
-
-
-"""
-    Side
-
-Enumeration of the sides of the domain
-"""
-@enum Side Left Right Bottom Top
-
-sides_along(dir::Axis) = dir == X_axis ? (Left, Right) : (Bottom, Top)
-
-
-# ROCKernels uses AMDGPU's ROCDevice, unlike CUDAKernels and KernelsAbstractions
-GenericDevice = Union{Device, ROCDevice}
-
 #
 # Performance tracking
 #
@@ -58,6 +37,7 @@ include("perf_utils.jl")
 # Main components
 #
 
+include("utils.jl")
 include("domain_ranges.jl")
 include("limiters.jl")
 include("tests.jl")

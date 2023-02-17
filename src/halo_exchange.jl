@@ -66,61 +66,22 @@ end
 
 function read_border_array!(params::ArmonParameters, data::ArmonDualData, comm_array, side::Side;
         dependencies=NoneEvent(), no_threading=false)
-    (; nghost, nx, ny, row_length) = params
-    @indexing_vars(params)
+    (; nx, ny) = params
 
-    if side == Left
-        main_range = @i(1, 1):row_length:@i(1, ny)
-        inner_range = 1:nghost
-        side_length = ny
-    elseif side == Right
-        main_range = @i(nx-nghost+1, 1):row_length:@i(nx-nghost+1, ny)
-        inner_range = 1:nghost
-        side_length = ny
-    elseif side == Top
-        main_range = @i(1, ny-nghost+1):row_length:@i(1, ny)
-        inner_range = 1:nx
-        side_length = nx
-    elseif side == Bottom
-        main_range = @i(1, 1):row_length:@i(1, nghost)
-        inner_range = 1:nx
-        side_length = nx
-    else
-        error("Unknown side: $side")
-    end
+    range = border_domain(params, side)
+    side_length = (side == Left || side == Right) ? ny : nx
 
-    range = DomainRange(main_range, inner_range)
     return read_border_array!(params, device(data), range, side_length, comm_array; dependencies, no_threading)
 end
 
 
 function write_border_array!(params::ArmonParameters, data::ArmonDualData, comm_array, side::Side;
         dependencies=NoneEvent(), no_threading=false)
-    (; nghost, nx, ny, row_length) = params
-    @indexing_vars(params)
+    (; nx, ny) = params
 
-    # Write the border array to the ghost cells of the data arrays
-    if side == Left
-        main_range = @i(1-nghost, 1):row_length:@i(1-nghost, ny)
-        inner_range = 1:nghost
-        side_length = ny
-    elseif side == Right
-        main_range = @i(nx+1, 1):row_length:@i(nx+1, ny)
-        inner_range = 1:nghost
-        side_length = ny
-    elseif side == Top
-        main_range = @i(1, ny+1):row_length:@i(1, ny+nghost)
-        inner_range = 1:nx
-        side_length = nx
-    elseif side == Bottom
-        main_range = @i(1, 1-nghost):row_length:@i(1, 0)
-        inner_range = 1:nx
-        side_length = nx
-    else
-        error("Unknown side: $side")
-    end
+    range = ghost_domain(params, side)
+    side_length = (side == Left || side == Right) ? ny : nx
 
-    range = DomainRange(main_range, inner_range)
     return write_border_array!(params, device(data), range, side_length, comm_array; dependencies, no_threading)
 end
 

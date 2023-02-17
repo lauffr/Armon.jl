@@ -1,5 +1,7 @@
 
 import Armon: ArmonData, ArmonDualData, read_data_from_file, write_sub_domain_file, inflate, conservation_vars
+import Armon: Side, Left, Right, Top, Bottom, has_neighbour, neighbour_at, border_domain, ghost_domain, offset_to
+import Armon: read_border_array!, copy_to_send_buffer!, copy_from_recv_buffer!, write_border_array!
 
 using MPI
 MPI.Init()
@@ -152,6 +154,91 @@ macro root_test(expr, kws...)
 end
 
 
+function test_neighbour_coords(px, py, proc_in_grid)
+    !proc_in_grid && return
+
+    ref_params = ref_params_for_sub_domain(:Sod, Float64, px, py)
+    coords = ref_params.cart_coords
+
+    for (coord, sides) in ((coords[1], (Left, Right)), (coords[2], (Bottom, Top))), 
+            side in (coord % 2 == 0 ? sides : reverse(sides))
+        has_neighbour(ref_params, side) || continue
+        neighbour_rank = neighbour_at(ref_params, side)
+        neighbour_coords = zeros(Int, 2)
+        MPI.Sendrecv!(collect(coords), neighbour_coords, ref_params.cart_comm; dest=neighbour_rank)
+        neighbour_coords = tuple(neighbour_coords...)
+
+        expected_coords = coords .+ offset_to(side)
+        @test expected_coords == neighbour_coords
+    end
+end
+
+
+function fill_domain_idx(array, domain, val)
+    for (iy, j) in enumerate(domain.col), ix in 1:length(domain.row)
+        i = ix + (j - 1)
+        array[i] = val + iy * 1000 + ix
+    end
+end
+
+
+function check_domain_idx(array, domain, val, my_rank, neighbour_rank)
+    diff_count = 0
+    for (iy, j) in enumerate(domain.col), ix in 1:length(domain.row)
+        i = ix + j - 1
+        expected_val = val + iy * 1000 + ix
+        if expected_val != array[i]
+            diff_count += 1
+            @debug "[$my_rank] With $neighbour_rank: at ($i,$j) (or $ix,$iy), expected $expected_val, got $(Int(array[i]))"
+        end
+    end
+    return diff_count
+end
+
+
+function test_halo_exchange(px, py, proc_in_grid)
+    !proc_in_grid && return
+
+    ref_params = ref_params_for_sub_domain(:Sod, Int64, px, py)
+    data = ArmonDualData(ref_params)
+    coords = ref_params.cart_coords
+    comm_array = device(data).work_array_1
+
+    for (coord, sides) in ((coords[1], (Left, Right)), (coords[2], (Bottom, Top))), 
+            side in (coord % 2 == 0 ? sides : reverse(sides))
+        has_neighbour(ref_params, side) || continue
+        neighbour_rank = neighbour_at(ref_params, side)
+
+        # Fill the domain we send with predictable data, with indexes encoded into the data
+        domain = border_domain(ref_params, side)
+        fill_domain_idx(device(data).rho, domain, ref_params.rank * 1_000_000)
+
+        # "Halo exchange", but with one neighbour at a time
+        read_border_array!(ref_params, data, comm_array, side) |> wait
+        copy_to_send_buffer!(data, comm_array, side) |> wait
+
+        # MPI.Sendrecv!(data.comm_buffers[side].send, data.comm_buffers[side].recv, ref_params.cart_comm;
+        #     dest=neighbour_rank, source=neighbour_rank)
+
+        requests = data.requests[side]
+        MPI.Start(requests.send)
+        MPI.Start(requests.recv)
+
+        MPI.Wait(requests.send)
+        MPI.Wait(requests.recv)
+
+        copy_from_recv_buffer!(data, comm_array, side) |> wait
+        write_border_array!(ref_params, data, comm_array, side) |> wait
+
+        # Check if the received array was correctly pasted into our ghost domain
+        g_domain = ghost_domain(ref_params, side)
+        diff_count = check_domain_idx(device(data).rho, g_domain, neighbour_rank * 1_000_000, ref_params.rank, neighbour_rank)
+
+        @test diff_count == 0
+    end
+end
+
+
 # All grid should be able to perfectly divide the number of cells in each direction in the reference
 # case (100×100)
 domain_combinations = [
@@ -179,6 +266,13 @@ total_proc_count = MPI.Comm_size(MPI.COMM_WORLD)
             comm, proc_in_grid = MPI.COMM_NULL, false
         end
 
+        @testset "Neighbours" begin
+            test_neighbour_coords(px, py, proc_in_grid)
+        end
+
+        @testset "Halo exchange" begin
+            test_halo_exchange(px, py, proc_in_grid)
+        end
 
         @testset "Reference" begin
             @testset "$test with $type" for type in (Float64,),

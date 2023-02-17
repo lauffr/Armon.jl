@@ -84,7 +84,7 @@ mutable struct ArmonParameters{Flt_T}
     proc_dims::NTuple{2, Int}
     cart_comm::MPI.Comm
     cart_coords::NTuple{2, Int}  # Coordinates of this process in the cartesian grid
-    neighbours::NamedTuple{(:left, :right, :bottom, :top), NTuple{4, Int}}  # Ranks of the neighbours of this process
+    neighbours::Dict{Side, Int}  # Ranks of the neighbours of this process
     global_grid::NTuple{2, Int}  # Dimensions (nx, ny) of the global grid
     reorder_grid::Bool
     comm_array_size::Int
@@ -205,22 +205,22 @@ function ArmonParameters(;
         C_COMM = MPI.Cart_create(COMM, [Int32(px), Int32(py)], [Int32(0), Int32(0)], reorder_grid)
         (cx, cy) = MPI.Cart_coords(C_COMM)
 
-        neighbours = (
-            left   = MPI.Cart_shift(C_COMM, 0, -1)[2],
-            right  = MPI.Cart_shift(C_COMM, 0,  1)[2],
-            bottom = MPI.Cart_shift(C_COMM, 1, -1)[2],
-            top    = MPI.Cart_shift(C_COMM, 1,  1)[2]
+        neighbours = Dict(
+            Left   => MPI.Cart_shift(C_COMM, 0, -1)[2],
+            Right  => MPI.Cart_shift(C_COMM, 0,  1)[2],
+            Bottom => MPI.Cart_shift(C_COMM, 1, -1)[2],
+            Top    => MPI.Cart_shift(C_COMM, 1,  1)[2]
         )
     else
         rank = 0
         proc_size = 1
         C_COMM = COMM
         (cx, cy) = (0, 0)
-        neighbours = (
-            left   = MPI.PROC_NULL,
-            right  = MPI.PROC_NULL,
-            bottom = MPI.PROC_NULL,
-            top    = MPI.PROC_NULL
+        neighbours = Dict(
+            Left   => MPI.PROC_NULL,
+            Right  => MPI.PROC_NULL,
+            Bottom => MPI.PROC_NULL,
+            Top    => MPI.PROC_NULL
         )
     end
 
@@ -420,12 +420,12 @@ Get `T`, the type used for numbers by the solver
 data_type(::ArmonParameters{T}) where T = T
 
 
-neighbour_at(params::ArmonParameters, side::Side) = params.neighbours[Int(side) + 1]
+neighbour_at(params::ArmonParameters, side::Side) = params.neighbours[side]
+has_neighbour(params::ArmonParameters, side::Side) = params.neighbours[side] ≠ MPI.PROC_NULL
 
-has_neighbour(params::ArmonParameters, side::Side) = neighbour_at(params, side) ≠ MPI.PROC_NULL
+neighbour_count(params::ArmonParameters) = count(≠(MPI.PROC_NULL), values(params.neighbours))
+neighbour_count(params::ArmonParameters, dir::Axis) = count(≠(MPI.PROC_NULL), neighbour_at.(params, sides_along(dir)))
 
-neighbour_count(params::ArmonParameters) = count(≥(0), params.neighbours)
-neighbour_count(params::ArmonParameters, dir::Axis) = count(≥(0), neighbour_at.(params, sides_along(dir)))
 
 function grid_coord_along(params::ArmonParameters, dir::Axis = params.current_axis)
     dir == X_axis ? params.cart_coords[1] : params.cart_coords[2]
@@ -600,4 +600,52 @@ function boundary_conditions_indexes(params::ArmonParameters, side::Side)
     end
 
     return i_start, loop_range, stride, d
+end
+
+
+function border_domain(params::ArmonParameters, side::Side)
+    (; nghost, nx, ny, row_length) = params
+    @indexing_vars(params)
+
+    if side == Left
+        main_range = @i(1, 1):row_length:@i(1, ny)
+        inner_range = 1:nghost
+        side_length = ny
+    elseif side == Right
+        main_range = @i(nx-nghost+1, 1):row_length:@i(nx-nghost+1, ny)
+        inner_range = 1:nghost
+        side_length = ny
+    elseif side == Top
+        main_range = @i(1, ny-nghost+1):row_length:@i(1, ny)
+        inner_range = 1:nx
+        side_length = nx
+    elseif side == Bottom
+        main_range = @i(1, 1):row_length:@i(1, nghost)
+        inner_range = 1:nx
+        side_length = nx
+    end
+
+    return DomainRange(main_range, inner_range)
+end
+
+
+function ghost_domain(params::ArmonParameters, side::Side)
+    (; nghost, nx, ny, row_length) = params
+    @indexing_vars(params)
+
+    if side == Left
+        main_range = @i(1-nghost, 1):row_length:@i(1-nghost, ny)
+        inner_range = 1:nghost
+    elseif side == Right
+        main_range = @i(nx+1, 1):row_length:@i(nx+1, ny)
+        inner_range = 1:nghost
+    elseif side == Top
+        main_range = @i(1, ny+1):row_length:@i(1, ny+nghost)
+        inner_range = 1:nx
+    elseif side == Bottom
+        main_range = @i(1, 1-nghost):row_length:@i(1, 0)
+        inner_range = 1:nx
+    end
+
+    return DomainRange(main_range, inner_range)
 end
