@@ -2,7 +2,7 @@
 # TODO: remove `async` from @kernel_options and `no_threading` kwarg
 
 @generic_kernel function boundaryConditions!(stencil_width::Int, stride::Int, i_start::Int, d::Int,
-        u_factor::T, v_factor::T, rho::V, umat::V, vmat::V, pmat::V, cmat::V, gmat::V) where {T, V <: AbstractArray{T}}
+        u_factor::T, v_factor::T, rho::V, umat::V, vmat::V, pmat::V, cmat::V, gmat::V, Emat::V) where {T, V <: AbstractArray{T}}
     @kernel_options(add_time, async, label=boundaryConditions!)
 
     idx = @index_1D_lin()
@@ -16,6 +16,7 @@
         pmat[i] = pmat[i₊]
         cmat[i] = cmat[i₊]
         gmat[i] = gmat[i₊]
+        Emat[i] = Emat[i₊]
 
         i  -= d
         i₊ += d
@@ -98,7 +99,16 @@ function boundaryConditions!(params::ArmonParameters{T}, data::ArmonDualData, si
         return boundaryConditions!(params, device(data), loop_range, stride, i_start, d, 
             u_factor, v_factor; dependencies, no_threading)
     else
-        comm_array = device(data).work_array_1
+        # TODO: replace with a direct write to the MPI Buffer
+        if side == Left
+            comm_array = device(data).work_array_1
+        elseif side == Right
+            comm_array = device(data).work_array_2
+        elseif side == Bottom
+            comm_array = device(data).work_array_3
+        else
+            comm_array = device(data).work_array_4
+        end
 
         # Exchange with the neighbour the cells on the side
         dependencies = read_border_array!(params, data, comm_array, side; dependencies)

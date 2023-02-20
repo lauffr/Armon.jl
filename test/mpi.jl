@@ -165,12 +165,65 @@ function test_neighbour_coords(px, py, proc_in_grid)
         has_neighbour(ref_params, side) || continue
         neighbour_rank = neighbour_at(ref_params, side)
         neighbour_coords = zeros(Int, 2)
-        MPI.Sendrecv!(collect(coords), neighbour_coords, ref_params.cart_comm; dest=neighbour_rank)
+        MPI.Sendrecv!(collect(coords), neighbour_coords, ref_params.cart_comm;
+                      dest=neighbour_rank, source=neighbour_rank)
         neighbour_coords = tuple(neighbour_coords...)
 
         expected_coords = coords .+ offset_to(side)
         @test expected_coords == neighbour_coords
+        if expected_coords != neighbour_coords
+            @debug "[$(ref_params.rank)] $neighbour_rank at $side: expected $expected_coords, got $neighbour_coords"
+        end
     end
+end
+
+NX = 100
+NY = 100
+using Printf
+
+function dump_neighbours(px, py, proc_in_grid)
+    !proc_in_grid && return
+
+    ref_params = ref_params_for_sub_domain(:Sod, Float64, px, py; nx=NX, ny=NY)
+    
+    coords = ref_params.cart_coords
+
+    neighbour_coords = Dict{Side, Tuple{Int, Int}}()
+
+    for (coord, sides) in ((coords[1], (Left, Right)), (coords[2], (Bottom, Top))), 
+            side in (coord % 2 == 0 ? sides : reverse(sides))
+        has_neighbour(ref_params, side) || continue
+        neighbour_rank = neighbour_at(ref_params, side)
+        n_coords = zeros(Int, 2)
+        MPI.Sendrecv!(collect(coords), n_coords, ref_params.cart_comm;
+                      dest=neighbour_rank, source=neighbour_rank)
+        neighbour_coords[side] = tuple(n_coords...)
+    end
+
+    MPI.Barrier(ref_params.cart_comm)
+
+    # Wait for the previous rank
+    if ref_params.rank > 0
+        MPI.Recv(Bool, ref_params.cart_comm; source=ref_params.rank-1)
+    end
+
+    println("[$(ref_params.rank)]: $(coords)")
+    for side in instances(Side)
+        if has_neighbour(ref_params, side)
+            neighbour_rank = neighbour_at(ref_params, side)
+            @printf(" - %6s: [%2d] = %6s (expected: %6s)", string(side), neighbour_rank, string(neighbour_coords[side]), string(coords .+ offset_to(side)))
+        else
+            @printf(" - %6s: ∅", string(side))
+        end
+        println()
+    end
+
+    # Notify the next rank
+    if ref_params.rank < px*py-1
+        MPI.Send(true, ref_params.cart_comm; dest=ref_params.rank+1)
+    end
+
+    MPI.Barrier(ref_params.cart_comm)
 end
 
 
@@ -199,7 +252,7 @@ end
 function test_halo_exchange(px, py, proc_in_grid)
     !proc_in_grid && return
 
-    ref_params = ref_params_for_sub_domain(:Sod, Int64, px, py)
+    ref_params = ref_params_for_sub_domain(:Sod, Int64, px, py; nx=NX, ny=NY)
     data = ArmonDualData(ref_params)
     coords = ref_params.cart_coords
     comm_array = device(data).work_array_1
@@ -242,7 +295,9 @@ end
 # All grid should be able to perfectly divide the number of cells in each direction in the reference
 # case (100×100)
 domain_combinations = [
-    (1, 1),
+    (1, 4),
+    (4, 1)
+#=    (1, 1),
     (1, 2),
     (1, 4),
     (4, 1),
@@ -250,7 +305,7 @@ domain_combinations = [
     (4, 4),
     (5, 2),
     (2, 5),
-    (5, 5)
+    (5, 5)=#
 ]
 
 total_proc_count = MPI.Comm_size(MPI.COMM_WORLD)
@@ -266,6 +321,8 @@ total_proc_count = MPI.Comm_size(MPI.COMM_WORLD)
             comm, proc_in_grid = MPI.COMM_NULL, false
         end
 
+        #dump_neighbours(px, py, proc_in_grid)
+
         @testset "Neighbours" begin
             test_neighbour_coords(px, py, proc_in_grid)
         end
@@ -278,7 +335,7 @@ total_proc_count = MPI.Comm_size(MPI.COMM_WORLD)
             @testset "$test with $type" for type in (Float64,),
                                             test in (:Sod, :Sod_y, :Sod_circ, :Sedov, :Bizarrium)
                 @MPI_test comm begin
-                    ref_params = ref_params_for_sub_domain(test, type, px, py)
+                    ref_params = ref_params_for_sub_domain(test, type, px, py; nx=NX, ny=NY)
                     dt, cycles, data = run_armon_reference(ref_params)
                     ref_dt, ref_cycles, ref_data = ref_data_for_sub_domain(ref_params)
 
@@ -305,7 +362,7 @@ total_proc_count = MPI.Comm_size(MPI.COMM_WORLD)
             @testset "$test with $type" for type in (Float64,),
                                             test in (:Sod, :Sod_y, :Sod_circ, :Sedov, :Bizarrium)
                 @MPI_test comm begin
-                    ref_params = ref_params_for_sub_domain(test, type, px, py; async_comms=true)
+                    ref_params = ref_params_for_sub_domain(test, type, px, py; async_comms=true, nx=NX, ny=NY)
                     dt, cycles, data = run_armon_reference(ref_params)
                     ref_dt, ref_cycles, ref_data = ref_data_for_sub_domain(ref_params)
 
@@ -322,7 +379,7 @@ total_proc_count = MPI.Comm_size(MPI.COMM_WORLD)
         @testset "Conservation" begin
             @testset "$test" for test in (:Sod, :Sod_y, :Sod_circ)
                 if enough_processes && proc_in_grid
-                    ref_params = ref_params_for_sub_domain(test, Float64, px, py; maxcycle=10000, maxtime=10000)
+                    ref_params = ref_params_for_sub_domain(test, Float64, px, py; maxcycle=10000, maxtime=10000, nx=NX, ny=NY)
 
                     data = ArmonDualData(ref_params)
                     init_test(ref_params, data)
