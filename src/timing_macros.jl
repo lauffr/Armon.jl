@@ -135,7 +135,7 @@ macro time_event_a(expr)        return build_time_expr(extract_function_name(exp
 macro time_expr_a(expr)         return build_time_expr(extract_function_name(expr), false, expr; exclude_from_total=true, use_wait=false) end
 
 
-@static if VERSION >= v"1.9"
+@static if VERSION >= v"1.8"
     compile_time_before_ns() = Base.cumulative_compile_time_ns()[1]
     compile_time_after_ns() = Base.cumulative_compile_time_ns()[1]
 else

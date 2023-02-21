@@ -99,18 +99,8 @@ function boundaryConditions!(params::ArmonParameters{T}, data::ArmonDualData, si
         return boundaryConditions!(params, device(data), loop_range, stride, i_start, d, 
             u_factor, v_factor; dependencies, no_threading)
     else
-        # TODO: replace with a direct write to the MPI Buffer
-        if side == Left
-            comm_array = device(data).work_array_1
-        elseif side == Right
-            comm_array = device(data).work_array_2
-        elseif side == Bottom
-            comm_array = device(data).work_array_3
-        else
-            comm_array = device(data).work_array_4
-        end
-
         # Exchange with the neighbour the cells on the side
+        comm_array = get_send_comm_array(data, side)
         dependencies = read_border_array!(params, data, comm_array, side; dependencies)
         dependencies = copy_to_send_buffer!(data, comm_array, side; dependencies)
 
@@ -173,7 +163,7 @@ function post_boundary_conditions(params::ArmonParameters, data::ArmonDualData;
 
     recv_events = map(iter_recv_requests(data)) do (side, recv_request)
         recv_deps = Event(MPI.Wait, recv_request; dependencies)
-        comm_array = device(data).work_array_1
+        comm_array = get_recv_comm_array(data, side)
         recv_deps = copy_from_recv_buffer!(data, comm_array, side; dependencies=recv_deps)
         recv_deps = write_border_array!(params, data, comm_array, side; dependencies=recv_deps)
         return recv_deps

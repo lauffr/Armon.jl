@@ -55,49 +55,51 @@ test_region_high(x::T, y::T, ::Sod_circ)  where T = (x - T(0.5))^2 + (y - T(0.5)
 test_region_high(x::T, _::T, ::Bizarrium) where T = x ≤ 0.5
 test_region_high(x::T, y::T, s::Sedov{T}) where T = x^2 + y^2 ≤ s.r^2
 
-function init_test_params(::Union{Sod, Sod_y, Sod_circ})
+InitParams = @NamedTuple{γ, high_ρ, low_ρ, high_E, low_E, high_u, low_u, high_v, low_v}
+
+function init_test_params(::Union{Sod, Sod_y, Sod_circ})::InitParams
     return (
-        7/5,   # gamma
-        1.,    # high_ρ
-        0.125, # low_ρ
-        1.0,   # high_p
-        0.1,   # low_p
-        0.,    # high_u
-        0.,    # low_u
-        0.,    # high_v
-        0.,    # low_v
+        γ      = 7/5,
+        high_ρ = 1.,
+        low_ρ  = 0.125,
+        high_E = 2.5,
+        low_E  = 2.0,
+        high_u = 0.,
+        low_u  = 0.,
+        high_v = 0.,
+        low_v  = 0.
     )
 end
 
-function init_test_params(::Bizarrium)
+function init_test_params(::Bizarrium)::InitParams
     return (
-        2,                 # gamma
-        1.42857142857e+4,  # high_ρ
-        10000.,            # low_ρ
-        6.40939744478e+10, # high_p
-        312.5e6,           # low_p
-        0.,                # high_u
-        250.,              # low_u
-        0.,                # high_v
-        0.,                # low_v
+        γ      = 2,
+        high_ρ = 1.42857142857e+4,
+        low_ρ  = 10000.,
+        high_E = 4.48657821135e+6,
+        low_E  = 0.5 * 250^2,
+        high_u = 0.,
+        low_u  = 250.,
+        high_v = 0.,
+        low_v  = 0.
     )
 end
 
-function init_test_params(p::Sedov{T}) where T
+function init_test_params(p::Sedov)::InitParams
     return (
-        7/5,   # gamma
-        1.,    # high_ρ
-        1.,    # low_ρ
-        (1.4 - 1) * 0.851072 / (π * p.r^2), # high_p
-        1e-14, # low_p
-        0.,    # high_u
-        0.,    # low_u
-        0.,    # high_v
-        0.,    # low_v
+        γ      = 7/5,
+        high_ρ = 1.,
+        low_ρ  = 1.,
+        high_E = 0.851072 / (π * p.r^2),
+        low_E  = 2.5e-14,
+        high_u = 0.,
+        low_u  = 0.,
+        high_v = 0.,
+        low_v  = 0.
     )
 end
 
-function boundaryCondition(side::Side, ::Union{Sod, Bizarrium})::NTuple{2, Int}
+function boundaryCondition(side::Side, ::Sod)::NTuple{2, Int}
     return (side == Left || side == Right) ? (-1, 1) : (1, 1)
 end
 
@@ -107,6 +109,10 @@ end
 
 function boundaryCondition(side::Side, ::Sod_circ)::NTuple{2, Int}
     return (side == Left || side == Right) ? (-1, 1) : (1, -1)
+end
+
+function boundaryCondition(side::Side, ::Bizarrium)::NTuple{2, Int}
+    return (side == Left) ? (-1, 1) : (1, -1)
 end
 
 function boundaryCondition(::Side, ::Sedov)::NTuple{2, Int}

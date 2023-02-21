@@ -2,6 +2,7 @@
 import Armon: ArmonData, ArmonDualData, read_data_from_file, write_sub_domain_file, inflate, conservation_vars
 import Armon: Side, Left, Right, Top, Bottom, has_neighbour, neighbour_at, border_domain, ghost_domain, offset_to
 import Armon: read_border_array!, copy_to_send_buffer!, copy_from_recv_buffer!, write_border_array!
+import Armon: get_recv_comm_array, get_send_comm_array, send_buffer, recv_buffer
 
 using MPI
 MPI.Init()
@@ -255,7 +256,6 @@ function test_halo_exchange(px, py, proc_in_grid)
     ref_params = ref_params_for_sub_domain(:Sod, Int64, px, py; nx=NX, ny=NY)
     data = ArmonDualData(ref_params)
     coords = ref_params.cart_coords
-    comm_array = device(data).work_array_1
 
     for (coord, sides) in ((coords[1], (Left, Right)), (coords[2], (Bottom, Top))), 
             side in (coord % 2 == 0 ? sides : reverse(sides))
@@ -267,11 +267,9 @@ function test_halo_exchange(px, py, proc_in_grid)
         fill_domain_idx(device(data).rho, domain, ref_params.rank * 1_000_000)
 
         # "Halo exchange", but with one neighbour at a time
+        comm_array = get_send_comm_array(data, side)
         read_border_array!(ref_params, data, comm_array, side) |> wait
         copy_to_send_buffer!(data, comm_array, side) |> wait
-
-        # MPI.Sendrecv!(data.comm_buffers[side].send, data.comm_buffers[side].recv, ref_params.cart_comm;
-        #     dest=neighbour_rank, source=neighbour_rank)
 
         requests = data.requests[side]
         MPI.Start(requests.send)
@@ -280,6 +278,7 @@ function test_halo_exchange(px, py, proc_in_grid)
         MPI.Wait(requests.send)
         MPI.Wait(requests.recv)
 
+        comm_array = get_recv_comm_array(data, side)
         copy_from_recv_buffer!(data, comm_array, side) |> wait
         write_border_array!(ref_params, data, comm_array, side) |> wait
 
@@ -295,9 +294,7 @@ end
 # All grid should be able to perfectly divide the number of cells in each direction in the reference
 # case (100×100)
 domain_combinations = [
-    (1, 4),
-    (4, 1)
-#=    (1, 1),
+    (1, 1),
     (1, 2),
     (1, 4),
     (4, 1),
@@ -305,7 +302,7 @@ domain_combinations = [
     (4, 4),
     (5, 2),
     (2, 5),
-    (5, 5)=#
+    (5, 5)
 ]
 
 total_proc_count = MPI.Comm_size(MPI.COMM_WORLD)
@@ -321,7 +318,7 @@ total_proc_count = MPI.Comm_size(MPI.COMM_WORLD)
             comm, proc_in_grid = MPI.COMM_NULL, false
         end
 
-        #dump_neighbours(px, py, proc_in_grid)
+        # dump_neighbours(px, py, proc_in_grid)
 
         @testset "Neighbours" begin
             test_neighbour_coords(px, py, proc_in_grid)

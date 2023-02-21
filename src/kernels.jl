@@ -235,11 +235,10 @@ end
         pos_x = cx * nx
         pos_y = cy * ny
 
-        (gamma::T,
-            high_ρ::T, low_ρ::T,
-            high_p::T, low_p::T,
-            high_u::T, low_u::T, 
-            high_v::T, low_v::T) = init_test_params(test_case)
+        (; high_ρ::T, low_ρ::T,
+           high_E::T, low_E::T,
+           high_u::T, low_u::T,
+           high_v::T, low_v::T) = init_test_params(test_case)
     end
 
     ix = ((i-1) % row_length) - nghost
@@ -257,12 +256,12 @@ end
 
     if test_region_high(x_mid, y_mid, test_case)
         rho[i]  = high_ρ
-        Emat[i] = high_p / ((gamma - one(T)) * rho[i])
+        Emat[i] = high_E
         umat[i] = high_u
         vmat[i] = high_v
     else
         rho[i]  = low_ρ
-        Emat[i] = low_p / ((gamma - one(T)) * rho[i])
+        Emat[i] = low_E
         umat[i] = low_u
         vmat[i] = low_v
     end

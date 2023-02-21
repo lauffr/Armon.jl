@@ -135,6 +135,27 @@ iter_recv_requests(data::ArmonDualData) =
     Iterators.map(p -> first(p) => last(last(p)), 
         Iterators.filter(!MPI.isnull ∘ last ∘ last, data.requests))
 
+send_buffer(data::ArmonDualData, side::Side) = data.comm_buffers[side].send
+recv_buffer(data::ArmonDualData, side::Side) = data.comm_buffers[side].recv
+
+get_send_comm_array(data::ArmonDualData{H, H}, side::Side) where H = send_buffer(data, side).data
+get_recv_comm_array(data::ArmonDualData{H, H}, side::Side) where H = recv_buffer(data, side).data
+
+function get_send_comm_array(data::ArmonDualData{D, H}, side::Side) where {D, H}
+    if side == Left
+        comm_array = device(data).work_array_1
+    elseif side == Right
+        comm_array = device(data).work_array_2
+    elseif side == Bottom
+        comm_array = device(data).work_array_3
+    else
+        comm_array = device(data).work_array_4
+    end
+    return view(comm_array, Base.OneTo(length(send_buffer(data, side).data)))
+end
+
+get_recv_comm_array(data::ArmonDualData{D, H}, side::Side) where {D, H} = get_send_comm_array(data, side)
+
 
 """
     device_to_host!(data::ArmonDualData)
@@ -166,9 +187,16 @@ function host_to_device!(data::ArmonDualData{D, H}) where {D, H}
 end
 
 
+# In homogenous configurations, the data is already in the send buffer because of `get_send_comm_array` and `get_recv_comm_array`
+copy_to_send_buffer!(::ArmonDualData{H, H}, ::H, ::Side; dependencies=NoneEvent()) where H = dependencies
+copy_to_send_buffer!(::ArmonDualData{H, H}, ::H, ::H; dependencies=NoneEvent()) where H = dependencies
+copy_from_recv_buffer!(::ArmonDualData{H, H}, ::H, ::Side; dependencies=NoneEvent()) where H = dependencies
+copy_from_recv_buffer!(::ArmonDualData{H, H}, ::H, ::H; dependencies=NoneEvent()) where H = dependencies
+
+
 function copy_to_send_buffer!(data::ArmonDualData{D, H}, array::D, side::Side; 
         dependencies=NoneEvent()) where {D, H}
-    buffer_data = data.comm_buffers[side].send.data
+    buffer_data = send_buffer(data, side).data
     copy_to_send_buffer!(data, array, buffer_data; dependencies)
 end
 
@@ -182,7 +210,7 @@ end
 
 function copy_from_recv_buffer!(data::ArmonDualData{D, H}, array::D, side::Side;
         dependencies=NoneEvent()) where {D, H}
-    buffer_data = data.comm_buffers[side].recv.data
+    buffer_data = recv_buffer(data, side).data
     copy_from_recv_buffer!(data, array, buffer_data; dependencies)
 end
 
