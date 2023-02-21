@@ -299,7 +299,7 @@ end
 #
 
 function numericalFluxes!(params::ArmonParameters, data::ArmonDualData, 
-        range::DomainRange, label::Symbol; dependencies=NoneEvent(), no_threading=false)
+        range::DomainRange, label::Symbol; dependencies=NoneEvent())
     dt = params.cycle_dt
     d_data = device(data)
     u = params.current_axis == X_axis ? d_data.umat : d_data.vmat
@@ -307,11 +307,11 @@ function numericalFluxes!(params::ArmonParameters, data::ArmonDualData,
         if params.scheme == :Godunov
             step_label = "acoustic_$(label)!"
             return acoustic!(params, d_data, step_label, range, d_data.ustar, d_data.pstar, u; 
-                dependencies, no_threading)
+                dependencies)
         elseif params.scheme == :GAD
             step_label = "acoustic_GAD_$(label)!"
             return acoustic_GAD!(params, d_data, step_label, range, dt, u, params.riemann_limiter; 
-                dependencies, no_threading)
+                dependencies)
         else
             error("Unknown acoustic scheme: ", params.scheme)
         end
@@ -322,7 +322,7 @@ end
 
 
 function numericalFluxes!(params::ArmonParameters, data::ArmonDualData, label::Symbol;
-        dependencies=NoneEvent(), no_threading=false)
+        dependencies=NoneEvent())
     (; steps_ranges) = params
 
     if label == :inner
@@ -341,27 +341,27 @@ function numericalFluxes!(params::ArmonParameters, data::ArmonDualData, label::S
         error("Wrong region label: $label")
     end
 
-    return numericalFluxes!(params, data, range, label; dependencies, no_threading)
+    return numericalFluxes!(params, data, range, label; dependencies)
 end
 
 
 function update_EOS!(params::ArmonParameters{T}, data::ArmonData, ::TestCase,
-        range::DomainRange, label::Symbol; dependencies, no_threading) where T
+        range::DomainRange, label::Symbol; dependencies) where T
     step_label = "update_EOS_$(label)!"
     gamma::T = 7/5
-    return update_perfect_gas_EOS!(params, data, step_label, range, gamma; dependencies, no_threading)
+    return update_perfect_gas_EOS!(params, data, step_label, range, gamma; dependencies)
 end
 
 
 function update_EOS!(params::ArmonParameters, data::ArmonData, ::Bizarrium,
-        range::DomainRange, label::Symbol; dependencies, no_threading)
+        range::DomainRange, label::Symbol; dependencies)
     step_label = "update_EOS_$(label)!"
-    return update_bizarrium_EOS!(params, data, step_label, range; dependencies, no_threading)
+    return update_bizarrium_EOS!(params, data, step_label, range; dependencies)
 end
 
 
 function update_EOS!(params::ArmonParameters, data::ArmonDualData, label::Symbol;
-        dependencies=NoneEvent(), no_threading=false)
+        dependencies=NoneEvent())
     (; steps_ranges) = params
 
     if label == :inner
@@ -380,7 +380,7 @@ function update_EOS!(params::ArmonParameters, data::ArmonDualData, label::Symbol
         error("Wrong region label: $label")
     end
 
-    return update_EOS!(params, device(data), params.test, range, label; dependencies, no_threading)
+    return update_EOS!(params, device(data), params.test, range, label; dependencies)
 end
 
 

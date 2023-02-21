@@ -1,9 +1,7 @@
 
-# TODO: remove `async` from @kernel_options and `no_threading` kwarg
-
 @generic_kernel function boundaryConditions!(stencil_width::Int, stride::Int, i_start::Int, d::Int,
         u_factor::T, v_factor::T, rho::V, umat::V, vmat::V, pmat::V, cmat::V, gmat::V, Emat::V) where {T, V <: AbstractArray{T}}
-    @kernel_options(add_time, async, label=boundaryConditions!)
+    @kernel_options(add_time, label=boundaryConditions!)
 
     idx = @index_1D_lin()
     i  = idx * stride + i_start
@@ -26,7 +24,7 @@ end
 
 @generic_kernel function read_border_array!(side_length::Int, nghost::Int,
         rho::V, umat::V, vmat::V, pmat::V, cmat::V, gmat::V, Emat::V, value_array::V) where V
-    @kernel_options(add_time, async, label=border_array)
+    @kernel_options(add_time, label=border_array)
 
     idx = @index_2D_lin()
     itr = @iter_idx()
@@ -46,7 +44,7 @@ end
 
 @generic_kernel function write_border_array!(side_length::Int, nghost::Int,
         rho::V, umat::V, vmat::V, pmat::V, cmat::V, gmat::V, Emat::V, value_array::V) where V
-    @kernel_options(add_time, async, label=border_array)
+    @kernel_options(add_time, label=border_array)
 
     idx = @index_2D_lin()
     itr = @iter_idx()
@@ -66,29 +64,29 @@ end
 
 
 function read_border_array!(params::ArmonParameters, data::ArmonDualData, comm_array, side::Side;
-        dependencies=NoneEvent(), no_threading=false)
+        dependencies=NoneEvent())
     (; nx, ny) = params
 
     range = border_domain(params, side)
     side_length = (side == Left || side == Right) ? ny : nx
 
-    return read_border_array!(params, device(data), range, side_length, comm_array; dependencies, no_threading)
+    return read_border_array!(params, device(data), range, side_length, comm_array; dependencies)
 end
 
 
 function write_border_array!(params::ArmonParameters, data::ArmonDualData, comm_array, side::Side;
-        dependencies=NoneEvent(), no_threading=false)
+        dependencies=NoneEvent())
     (; nx, ny) = params
 
     range = ghost_domain(params, side)
     side_length = (side == Left || side == Right) ? ny : nx
 
-    return write_border_array!(params, device(data), range, side_length, comm_array; dependencies, no_threading)
+    return write_border_array!(params, device(data), range, side_length, comm_array; dependencies)
 end
 
 
 function boundaryConditions!(params::ArmonParameters{T}, data::ArmonDualData, side::Side;
-        dependencies=NoneEvent(), no_threading=false) where T
+        dependencies=NoneEvent()) where T
     if !has_neighbour(params, side)
         # No neighbour: global domain boundary conditions
         (u_factor::T, v_factor::T) = boundaryCondition(side, params.test)
@@ -97,7 +95,7 @@ function boundaryConditions!(params::ArmonParameters{T}, data::ArmonDualData, si
         i_start -= stride  # Adjust for the fact that `@index_1D_lin()` is 1-indexed
 
         return boundaryConditions!(params, device(data), loop_range, stride, i_start, d, 
-            u_factor, v_factor; dependencies, no_threading)
+            u_factor, v_factor; dependencies)
     else
         # Exchange with the neighbour the cells on the side
         comm_array = get_send_comm_array(data, side)
