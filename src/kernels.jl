@@ -10,7 +10,6 @@ end
 
 @generic_kernel function acoustic!(s::Int, ustar_::V, pstar_::V, 
         rho::V, u::V, pmat::V, cmat::V) where V
-    @kernel_options(add_time, async, dynamic_label)
 
     i = @index_2D_lin()
     ustar_[i], pstar_[i] = acoustic_Godunov(
@@ -23,7 +22,6 @@ end
 @generic_kernel function acoustic_GAD!(s::Int, dt::T, dx::T, 
         ustar::V, pstar::V, rho::V, u::V, pmat::V, cmat::V,
         ::LimiterType) where {T, V <: AbstractArray{T}, LimiterType <: Limiter}
-    @kernel_options(add_time, async, dynamic_label)
 
     i = @index_2D_lin()
 
@@ -72,7 +70,6 @@ end
 
 @generic_kernel function update_perfect_gas_EOS!(gamma::T, 
         rho::V, Emat::V, umat::V, vmat::V, pmat::V, cmat::V, gmat::V) where {T, V <: AbstractArray{T}}
-    @kernel_options(add_time, async, dynamic_label)
 
     i = @index_2D_lin()
     e = Emat[i] - 0.5 * (umat[i]^2 + vmat[i]^2)
@@ -84,7 +81,6 @@ end
 
 @generic_kernel function update_bizarrium_EOS!(
         rho::V, umat::V, vmat::V, Emat::V, pmat::V, cmat::V, gmat::V) where {T, V <: AbstractArray{T}}
-    @kernel_options(add_time, async, dynamic_label)
 
     i = @index_2D_lin()
 
@@ -127,7 +123,6 @@ end
 
 @generic_kernel function cell_update!(s::Int, dx::T, dt::T, 
         ustar::V, pstar::V, rho::V, u::V, Emat::V) where {T, V <: AbstractArray{T}}
-    @kernel_options(add_time, label=cellUpdate!)
 
     i = @index_2D_lin()
     dm = rho[i] * dx
@@ -140,7 +135,6 @@ end
 @generic_kernel function euler_projection!(s::Int, dx::T, dt::T,
         ustar::V, rho::V, umat::V, vmat::V, Emat::V,
         advection_ρ::V, advection_uρ::V, advection_vρ::V, advection_Eρ::V) where {T, V <: AbstractArray{T}}
-    @kernel_options(add_time, label=euler_remap)
 
     i = @index_2D_lin()
 
@@ -161,7 +155,6 @@ end
 @generic_kernel function first_order_euler_remap!(s::Int, dt::T,
         ustar::V, rho::V, umat::V, vmat::V, Emat::V,
         advection_ρ::V, advection_uρ::V, advection_vρ::V, advection_Eρ::V) where {T, V <: AbstractArray{T}}
-    @kernel_options(add_time, label=euler_remap_1st)
 
     i = @index_2D_lin()
 
@@ -181,7 +174,6 @@ end
 @generic_kernel function second_order_euler_remap!(s::Int, dx::T, dt::T,
         ustar::V, rho::V, umat::V, vmat::V, Emat::V,
         advection_ρ::V, advection_uρ::V, advection_vρ::V, advection_Eρ::V) where {T, V <: AbstractArray{T}}
-    @kernel_options(add_time, label=euler_remap_2nd)
 
     i = @index_2D_lin()
 
@@ -221,7 +213,6 @@ end
         x::V, y::V, rho::V, Emat::V, umat::V, vmat::V, 
         domain_mask::V, pmat::V, cmat::V, ustar::V, pstar::V, 
         test_case::Test) where {T, V <: AbstractArray{T}, Test <: TwoStateTestCase}
-    @kernel_options(add_time, label=init_test)
 
     i = @index_1D_lin()
 
@@ -305,12 +296,10 @@ function numericalFluxes!(params::ArmonParameters, data::ArmonDualData,
     u = params.current_axis == X_axis ? d_data.umat : d_data.vmat
     if params.riemann == :acoustic  # 2-state acoustic solver (Godunov)
         if params.scheme == :Godunov
-            step_label = "acoustic_$(label)!"
-            return acoustic!(params, d_data, step_label, range, d_data.ustar, d_data.pstar, u; 
+            return acoustic!(params, d_data, range, d_data.ustar, d_data.pstar, u; 
                 dependencies)
         elseif params.scheme == :GAD
-            step_label = "acoustic_GAD_$(label)!"
-            return acoustic_GAD!(params, d_data, step_label, range, dt, u, params.riemann_limiter; 
+            return acoustic_GAD!(params, d_data, range, dt, u, params.riemann_limiter; 
                 dependencies)
         else
             error("Unknown acoustic scheme: ", params.scheme)
@@ -345,18 +334,16 @@ function numericalFluxes!(params::ArmonParameters, data::ArmonDualData, label::S
 end
 
 
-function update_EOS!(params::ArmonParameters{T}, data::ArmonData, ::TestCase,
-        range::DomainRange, label::Symbol; dependencies) where T
-    step_label = "update_EOS_$(label)!"
+function update_EOS!(params::ArmonParameters{T}, data::ArmonData, ::TestCase, range::DomainRange;
+        dependencies) where T
     gamma::T = 7/5
-    return update_perfect_gas_EOS!(params, data, step_label, range, gamma; dependencies)
+    return update_perfect_gas_EOS!(params, data, range, gamma; dependencies)
 end
 
 
-function update_EOS!(params::ArmonParameters, data::ArmonData, ::Bizarrium,
-        range::DomainRange, label::Symbol; dependencies)
-    step_label = "update_EOS_$(label)!"
-    return update_bizarrium_EOS!(params, data, step_label, range; dependencies)
+function update_EOS!(params::ArmonParameters, data::ArmonData, ::Bizarrium, range::DomainRange;
+        dependencies)
+    return update_bizarrium_EOS!(params, data, range; dependencies)
 end
 
 
@@ -380,7 +367,7 @@ function update_EOS!(params::ArmonParameters, data::ArmonDualData, label::Symbol
         error("Wrong region label: $label")
     end
 
-    return update_EOS!(params, device(data), params.test, range, label; dependencies)
+    return update_EOS!(params, device(data), params.test, range; dependencies)
 end
 
 
@@ -416,7 +403,7 @@ function projection_remap!(params::ArmonParameters, data::ArmonDualData; depende
     advection_range = params.steps_ranges.advection
     projection_range = params.steps_ranges.projection
 
-    if params.projection == :euler
+    @timeit params.timer "Advection" if params.projection == :euler
         event = first_order_euler_remap!(params, d_data, advection_range, params.cycle_dt,
             advection_ρ, advection_uρ, advection_vρ, advection_Eρ; dependencies)
     elseif params.projection == :euler_2nd
@@ -426,7 +413,7 @@ function projection_remap!(params::ArmonParameters, data::ArmonDualData; depende
         error("Unknown projection scheme: $(params.projection)")
     end
 
-    return euler_projection!(params, d_data, projection_range, params.cycle_dt,
+    return @timeit params.timer "Projection" euler_projection!(params, d_data, projection_range, params.cycle_dt,
         advection_ρ, advection_uρ, advection_vρ, advection_Eρ; dependencies=event)
 end
 
@@ -500,12 +487,12 @@ function time_step(params::ArmonParameters, data::ArmonDualData; dependencies=No
     if cst_dt
         params.next_cycle_dt = Dt
     elseif !dt_on_even_cycles || iseven(cycle) || params.curr_cycle_dt == 0
-        @perf_task "loop" "local_time_step" begin
-            local_dt = @time_expr_c local_time_step(params, device(data), params.curr_cycle_dt; dependencies)
+        @timeit params.timer "local_time_step" begin
+            local_dt = local_time_step(params, device(data), params.curr_cycle_dt; dependencies)
         end
 
         if params.use_MPI
-            @perf_task "comms" "MPI_dt" @time_expr_c "dt_Allreduce_MPI" begin
+            @timeit params.timer "time_step Allreduce" begin
                 # TODO: use a non-blocking IAllreduce, which would then be probed at the end of a cycle
                 #  however, we need to implement IAllreduce ourselves, since MPI.jl doesn't have a nice API for it (make a PR?)
                 next_dt = MPI.Allreduce(local_dt, MPI.Op(min, data_type(params)), cart_comm)
@@ -521,7 +508,7 @@ function time_step(params::ArmonParameters, data::ArmonDualData; dependencies=No
         params.next_cycle_dt = next_dt
     else
         params.next_cycle_dt = params.curr_cycle_dt
-    end    
+    end
 end
 
 

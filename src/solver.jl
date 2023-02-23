@@ -1,4 +1,27 @@
 
+struct SolverStats
+    final_time::Float64
+    last_dt::Float64
+    cycles::Int
+    giga_cells_per_sec::Float64
+    data::Union{Nothing, ArmonDualData}
+    timer::Union{Nothing, TimerOutput}
+end
+
+
+function Base.show(io::IO, stats::SolverStats)
+    println(io, "Solver stats:")
+    println(io, " - final time:  ", @sprintf("%.18f", stats.final_time), " sec")
+    println(io, " - last Δt:     ", @sprintf("%.18f", stats.last_dt), " sec")
+    println(io, " - cycles:      ", stats.cycles)
+    println(io, " - performance: ", round(stats.giga_cells_per_sec * 1e3, digits=3), " ×10⁶ cells-cycles/sec")
+    if !isnothing(stats.timer)
+        println(io, "Steps time breakdown:")
+        show(io, stats.timer; compact=false, allocations=true, sortby=:firstexec)
+    end
+end
+
+
 macro checkpoint(step_label)
     esc(:(step_checkpoint(params, data, string($step_label); dependencies)))
 end
@@ -21,46 +44,51 @@ end
 
 
 function solver_cycle(params::ArmonParameters, data::ArmonDualData; dependencies=NoneEvent())
-    time_step(params, data; dependencies)
+    (; timer) = params
+    @timeit timer "time_step" time_step(params, data; dependencies)
 
     for (axis, dt_factor) in split_axes(params)
         update_axis_parameters(params, axis)
         update_steps_ranges(params)
         params.cycle_dt = params.curr_cycle_dt * dt_factor
 
+        @timeit timer "$axis" begin
+
         if params.async_comms
-            dependencies = update_EOS!(params, data, :outer_lb; dependencies)
-            dependencies = update_EOS!(params, data, :outer_rt; dependencies)
+            dependencies = @timeit timer "EOS lb" update_EOS!(params, data, :outer_lb; dependencies)
+            dependencies = @timeit timer "EOS rt" update_EOS!(params, data, :outer_rt; dependencies)
 
-            outer_lb_BC = boundaryConditions!(params, data, :outer_lb; dependencies)
-            outer_rt_BC = boundaryConditions!(params, data, :outer_rt; dependencies)
+            outer_lb_BC = @timeit timer "BC lb" boundaryConditions!(params, data, :outer_lb; dependencies)
+            outer_rt_BC = @timeit timer "BC rt" boundaryConditions!(params, data, :outer_rt; dependencies)
 
-            dependencies = update_EOS!(params, data, :inner; dependencies)
-            dependencies = numericalFluxes!(params, data, :inner; dependencies)
+            dependencies = @timeit timer "EOS" update_EOS!(params, data, :inner; dependencies)
+            dependencies = @timeit timer "fluxes" numericalFluxes!(params, data, :inner; dependencies)
 
             dependencies = MultiEvent((dependencies, outer_lb_BC, outer_rt_BC))
-            dependencies = post_boundary_conditions(params, data; dependencies)
+            dependencies = @timeit timer "Post BC" post_boundary_conditions(params, data; dependencies)
 
-            dependencies = numericalFluxes!(params, data, :outer_lb; dependencies)
-            dependencies = numericalFluxes!(params, data, :outer_rt; dependencies)
+            dependencies = @timeit timer "fluxes lb" numericalFluxes!(params, data, :outer_lb; dependencies)
+            dependencies = @timeit timer "fluxes rt" numericalFluxes!(params, data, :outer_rt; dependencies)
 
             # TODO: async cellUpdate?
         else
-            dependencies = update_EOS!(params, data, :full; dependencies)
+            dependencies = @timeit timer "EOS" update_EOS!(params, data, :full; dependencies)
             @checkpoint("update_EOS") && @goto stop
 
-            dependencies = boundaryConditions!(params, data; dependencies)
+            dependencies = @timeit timer "BC" boundaryConditions!(params, data; dependencies)
             @checkpoint("boundaryConditions") && @goto stop
 
-            dependencies = numericalFluxes!(params, data, :full; dependencies)
+            dependencies = @timeit timer "fluxes" numericalFluxes!(params, data, :full; dependencies)
             @checkpoint("numericalFluxes") && @goto stop
         end
 
-        @perf_task "loop" "cellUpdate" dependencies = cellUpdate!(params, data; dependencies)
+        dependencies = @timeit timer "update" cellUpdate!(params, data; dependencies)
         @checkpoint("cellUpdate") && @goto stop
 
-        @perf_task "loop" "euler_proj" dependencies = projection_remap!(params, data; dependencies)
+        dependencies = @timeit timer "remap" projection_remap!(params, data; dependencies)
         @checkpoint("projection_remap") && @goto stop
+
+        end
     end
 
     return dependencies, false
@@ -85,9 +113,8 @@ function time_loop(params::ArmonParameters, data::ArmonDualData)
     end
 
     t1 = time_ns()
-    t_warmup = t1
 
-    init_time_step(params, data) && @goto stop
+    (@timeit params.timer "init_time_step" init_time_step(params, data)) && @goto stop
 
     dependencies = NoneEvent()
 
@@ -95,12 +122,10 @@ function time_loop(params::ArmonParameters, data::ArmonDualData)
     while params.time < maxtime && params.cycle < maxcycle
         cycle_start = time_ns()
 
-        dependencies, stop = solver_cycle(params, data; dependencies)
+        dependencies, stop = @timeit params.timer "solver_cycle" solver_cycle(params, data; dependencies)
         stop && @goto stop
 
-        if !is_warming_up()
-            total_cycles_time += time_ns() - cycle_start
-        end
+        total_cycles_time += time_ns() - cycle_start
 
         if is_root
             if silent <= 1
@@ -119,12 +144,6 @@ function time_loop(params::ArmonParameters, data::ArmonDualData)
         params.cycle += 1
         params.time += params.curr_cycle_dt
 
-        if params.cycle == 5
-            wait(dependencies)
-            t_warmup = time_ns()
-            set_warmup(false)
-        end
-
         if animation_step != 0 && (params.cycle - 1) % animation_step == 0
             wait(dependencies)
             frame_index = (params.cycle - 1) ÷ animation_step
@@ -139,23 +158,14 @@ function time_loop(params::ArmonParameters, data::ArmonDualData)
 
     t2 = time_ns()
 
-    nb_cells = nx * ny
-    grind_time = (t2 - t_warmup) / ((params.cycle - 5) * nb_cells)
+    solve_time = t2 - t1
+    grind_time = solve_time / (params.cycle * nx * ny)
 
     if is_root
-        if params.compare
-            # ignore timing errors when comparing
-        elseif params.cycle <= 5 && maxcycle > 5
-            error("More than 5 cycles are needed to compute the grind time, got: $(params.cycle)")
-        elseif t2 < t_warmup
-            error("Clock error: $t2 < $t_warmup")
-        end
-
         if silent < 3
             println(" ")
-            println("Total time:  ", round((t2 - t1) / 1e9, digits=5),         " sec")
+            println("Total time:  ", round(solve_time / 1e9, digits=5),         " sec")
             println("Cycles time: ", round(total_cycles_time / 1e9, digits=5), " sec")
-            println("Warmup:      ", round((t_warmup - t1) / 1e9, digits=5),   " sec")
             println("Grind time:  ", round(grind_time / 1e3, digits=5),        " µs/cell/cycle")
             println("Cells/sec:   ", round(1 / grind_time * 1e3, digits=5),    " Mega cells/sec")
             println("Cycles:      ", params.cycle)
@@ -165,7 +175,7 @@ function time_loop(params::ArmonParameters, data::ArmonDualData)
         end
     end
 
-    return params.next_cycle_dt, params.cycle, 1 / grind_time, total_cycles_time
+    return params.next_cycle_dt, params.cycle, 1 / grind_time
 end
 
 #
@@ -173,13 +183,7 @@ end
 #
 
 function armon(params::ArmonParameters{T}) where T
-    (; silent, is_root) = params
-
-    if params.measure_time
-        empty!(axis_time_contrib)
-        empty!(total_time_contrib)
-        set_warmup(true)
-    end
+    (; silent, is_root, timer) = params
 
     if is_root && silent < 3
         print_parameters(params)
@@ -189,16 +193,16 @@ function armon(params::ArmonParameters{T}) where T
         (; rank, proc_size, cart_coords) = params
 
         # Local info
-        node_local_comm = MPI.Comm_split_type(COMM, MPI.COMM_TYPE_SHARED, rank)
+        node_local_comm = MPI.Comm_split_type(params.global_comm, MPI.COMM_TYPE_SHARED, rank)
         local_rank = MPI.Comm_rank(node_local_comm)
         local_size = MPI.Comm_size(node_local_comm)
 
         is_root && println("\nProcesses info:")
-        rank > 0 && MPI.Recv(Bool, rank-1, 1, COMM)
+        rank > 0 && MPI.Recv(Bool, rank-1, 1, params.global_comm)
         @printf(" - %2d/%-2d, local: %2d/%-2d, coords: (%2d,%-2d), cores: %3d to %3d\n", 
             rank, proc_size, local_rank, local_size, cart_coords[1], cart_coords[2], 
             minimum(getcpuids()), maximum(getcpuids()))
-        rank < proc_size-1 && MPI.Send(true, rank+1, 1, COMM)
+        rank < proc_size-1 && MPI.Send(true, rank+1, 1, params.global_comm)
     end
 
     if is_root && params.animation_step != 0
@@ -209,75 +213,38 @@ function armon(params::ArmonParameters{T}) where T
         end
     end
 
+    if params.measure_time
+        reset_timer!(timer)
+        enable_timer!(timer)
+    end
+
     # Allocate without initialisation in order to correctly map the NUMA space using the first-touch
     # policy when working on CPU only
-    @perf_task "init" "alloc" data = ArmonDualData(params)
-    @perf_task "init" "init_test" wait(init_test(params, data))
+    @timeit timer "init" begin
+        data = @timeit timer "alloc" ArmonDualData(params)
+        @timeit timer "init_test" wait(init_test(params, data))
+    end
 
-    @pretty_time dt, cycles, cells_per_sec, total_time = time_loop(params, data)
+    dt, cycles, cells_per_sec = time_loop(params, data)
+
+    if params.measure_time
+        disable_timer!(timer)
+    end
+
+    stats = SolverStats(
+        params.time, dt, cycles, cells_per_sec,
+        params.return_data ? data : nothing,
+        params.measure_time ? copy(timer) : nothing
+    )
 
     params.use_gpu && device_to_host!(data)
     params.write_output && write_sub_domain_file(params, data, params.output_file)
     params.write_slices && write_slices_files(params, data, params.output_file)
 
-    sorted_time_contrib = sort(collect(total_time_contrib))
-
-    if params.measure_time && length(sorted_time_contrib) > 0
-        sync_total_time = mapreduce(x->x[2], +, sorted_time_contrib)
-        async_efficiency = (sync_total_time - total_time) / total_time
-        async_efficiency = max(async_efficiency, 0.)
-    else
-        sync_total_time = 1.
-        async_efficiency = 0.
+    if params.measure_time && params.silent < 3
+        show(params.timer)
+        println()
     end
 
-    if is_root && params.measure_time && silent < 3 && !isempty(axis_time_contrib)
-        axis_time = Dict{Axis, Float64}()
-
-        # Print the time of each step for each axis
-        for (axis, time_contrib_axis) in sort(collect(axis_time_contrib); lt=(a, b)->(a[1] < b[1]))
-            isempty(time_contrib_axis) && continue
-
-            axis_total_time = mapreduce(x->x[2], +, collect(time_contrib_axis))
-            axis_time[axis] = axis_total_time
-
-            println("\nTime for each step of the $axis:          ( axis%) (total%)")
-            for (step_label, step_time) in sort(collect(time_contrib_axis))
-                @printf(" - %-25s %10.5f ms (%5.2f%%) (%5.2f%%)\n", 
-                    step_label, step_time / 1e6, step_time / axis_total_time * 100, 
-                    step_time / total_time * 100)
-            end
-            @printf(" => %-24s %10.5f ms          (%5.2f%%)\n", "Axis total time:", 
-                axis_total_time / 1e6, axis_total_time / total_time * 100)
-        end
-
-        # Print the total distribution of time
-        println("\nTotal time repartition: ")
-        for (step_label, step_time) in sorted_time_contrib
-            @printf(" - %-25s %10.5f ms (%5.2f%%)\n",
-                    step_label, step_time / 1e6, step_time / total_time * 100)
-        end
-
-        @printf("\nAsynchronicity efficiency: %.2f sec / %.2f sec = %.2f%% (effective time / total steps time)\n",
-            total_time / 1e9, sync_total_time / 1e9, total_time / sync_total_time * 100)
-    end
-
-    if is_root && params.measure_hw_counters && !isempty(axis_hw_counters)
-        sorted_counters = sort(collect(axis_hw_counters); lt=(a, b)->(a[1] < b[1]))
-        sorted_counters = map((p)->(string(first(p)) => last(p)), sorted_counters)
-        if params.silent < 3
-            print_hardware_counters_table(stdout, params.hw_counters_options, sorted_counters)
-        end
-        if !isempty(params.hw_counters_output)
-            open(params.hw_counters_output, "w") do file
-                print_hardware_counters_table(file, params.hw_counters_options, sorted_counters; raw_print=true)
-            end
-        end
-    end
-
-    if params.return_data
-        return data, dt, cycles, cells_per_sec, sorted_time_contrib, async_efficiency
-    else
-        return dt, cycles, cells_per_sec, sorted_time_contrib, async_efficiency
-    end
+    return stats
 end

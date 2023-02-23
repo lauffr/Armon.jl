@@ -135,8 +135,8 @@ end
 
 
 function measure_solver_performance(params)
-    cells_per_sec = armon(params)[3]
-    return round(cells_per_sec; sigdigits=4)
+    stats = armon(params)
+    return round(stats.giga_cells_per_sec; sigdigits=4)
 end
 
 

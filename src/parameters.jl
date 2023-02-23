@@ -1,12 +1,4 @@
 
-COMM = MPI.COMM_WORLD
-
-function set_world_comm(comm::MPI.Comm)
-    # Allows to customize which processes will be part of the grid
-    global COMM = comm
-end
-
-
 mutable struct ArmonParameters{Flt_T}
     # Test problem type, riemann solver and solver scheme
     test::TestCase
@@ -63,9 +55,7 @@ mutable struct ArmonParameters{Flt_T}
     output_precision::Int
     animation_step::Int
     measure_time::Bool
-    measure_hw_counters::Bool
-    hw_counters_options::String
-    hw_counters_output::String
+    timer::TimerOutput
     return_data::Bool
 
     # Performance
@@ -82,6 +72,7 @@ mutable struct ArmonParameters{Flt_T}
     root_rank::Int
     proc_size::Int
     proc_dims::NTuple{2, Int}
+    global_comm::MPI.Comm
     cart_comm::MPI.Comm
     cart_coords::NTuple{2, Int}  # Coordinates of this process in the cartesian grid
     neighbours::Dict{Side, Int}  # Ranks of the neighbours of this process
@@ -110,11 +101,11 @@ function ArmonParameters(;
         silent = 0, output_dir = ".", output_file = "output",
         write_output = false, write_ghosts = false, write_slices = false, output_precision = nothing,
         animation_step = 0,
-        measure_time = true, measure_hw_counters = false,
-        hw_counters_options = nothing, hw_counters_output = nothing,
+        measure_time = true,
         use_threading = true, use_simd = true,
         use_gpu = false, device = :CUDA, block_size = 1024,
-        use_MPI = true, px = 1, py = 1, reorder_grid = true, async_comms = false,
+        use_MPI = true, px = 1, py = 1, reorder_grid = true, global_comm = nothing,
+        async_comms = false,
         compare = false, is_ref = false, comparison_tolerance = 1e-10,
         return_data = false
     )
@@ -135,18 +126,6 @@ function ArmonParameters(;
 
     if cst_dt && Dt == zero(flt_type)
         error("Dt == 0 with constant step enabled")
-    end
-
-    if measure_hw_counters
-        use_gpu && error("Hardware counters are not supported on GPU")
-        async_comms && error("Hardware counters in an asynchronous context are NYI")
-        !measure_time && error("Hardware counters are only done when timings are measured as well")
-
-        hw_counters_options = @something hw_counters_options default_perf_options()
-        hw_counters_output = @something hw_counters_output ""
-    else
-        hw_counters_options = ""
-        hw_counters_output = ""
     end
 
     min_nghost = 1
@@ -194,15 +173,16 @@ function ArmonParameters(;
     end
 
     # MPI
+    global_comm = something(global_comm, MPI.COMM_WORLD)
     if use_MPI
         !MPI.Initialized() && error("'use_MPI=true' but MPI has not yet been initialized")
 
-        rank = MPI.Comm_rank(COMM)
-        proc_size = MPI.Comm_size(COMM)
+        rank = MPI.Comm_rank(global_comm)
+        proc_size = MPI.Comm_size(global_comm)
 
         # Create a cartesian grid communicator of px × py processes. reorder=true can be very
         # important for performance since it will optimize the layout of the processes.
-        C_COMM = MPI.Cart_create(COMM, [Int32(px), Int32(py)], [Int32(0), Int32(0)], reorder_grid)
+        C_COMM = MPI.Cart_create(global_comm, [Int32(px), Int32(py)], [Int32(0), Int32(0)], reorder_grid)
         (cx, cy) = MPI.Cart_coords(C_COMM)
 
         neighbours = Dict(
@@ -214,7 +194,7 @@ function ArmonParameters(;
     else
         rank = 0
         proc_size = 1
-        C_COMM = COMM
+        C_COMM = global_comm
         (cx, cy) = (0, 0)
         neighbours = Dict(
             Left   => MPI.PROC_NULL,
@@ -299,6 +279,9 @@ function ArmonParameters(;
         comm_array_size = 0
     end
 
+    timer = TimerOutput()
+    disable_timer!(timer)
+
     params = ArmonParameters{flt_type}(
         test, riemann, scheme, riemann_limiter,
 
@@ -317,14 +300,13 @@ function ArmonParameters(;
 
         silent, output_dir, output_file,
         write_output, write_ghosts, write_slices, output_precision, animation_step,
-        measure_time,
-        measure_hw_counters, hw_counters_options, hw_counters_output,
+        measure_time, timer,
         return_data,
 
         use_threading, use_simd, use_gpu, device, block_size,
 
         use_MPI, is_root, rank, root_rank,
-        proc_size, (px, py), C_COMM, (cx, cy), neighbours, (g_nx, g_ny),
+        proc_size, (px, py), global_comm, C_COMM, (cx, cy), neighbours, (g_nx, g_ny),
         reorder_grid, comm_array_size,
         async_comms,
 
@@ -338,78 +320,104 @@ function ArmonParameters(;
 end
 
 
-function print_parameters(p::ArmonParameters{T}) where T
-    println("Parameters:")
-    print(" - multithreading: ", p.use_threading)
-    if p.use_threading
-        if use_std_lib_threads
-            println(" (Julia standard threads: ", Threads.nthreads(), ")")
-        else
-            println(" (Julia threads: ", Threads.nthreads(), ")")
+function print_parameter(io::IO, pad::Int, name::String, value; nl=true, suffix="")
+    print(io, "  ", rpad(name * ": ", pad), value, suffix)
+    nl && println(io)
+end
+
+
+function print_parameters(io::IO, p::ArmonParameters; pad = 20)
+    println(io, "Armon parameters")
+    print_parameter(io, pad, "ieee_bits", sizeof(data_type(p)) * 8)
+    if !p.use_gpu
+        print_parameter(io, pad, "multithreading", p.use_threading, nl=!p.use_threading)
+        if p.use_threading
+            println(io, " ($(Threads.nthreads()) $(use_std_lib_threads ? "standard " : "")thread",
+                Threads.nthreads() != 1 ? "s" : "", ")")
         end
+        print_parameter(io, pad, "use_simd", p.use_simd)
+        print_parameter(io, pad, "use_gpu", false)
     else
-        println()
-    end
-    println(" - use_simd:   ", p.use_simd)
-    print(" - use_gpu:    ", p.use_gpu)
-    if p.use_gpu
-        print(", ")
-        if p.device == CPU()
-            println("CPU")
-        elseif p.device == CUDADevice()
-            println("CUDA")
-        elseif p.device == ROCDevice()
-            println("ROCm")
+        print_parameter(io, pad, "GPU", true, nl=false)
+        if p.device isa CPU
+            print(io, "KA.jl's CPU backend")
+        elseif p.device isa CUDADevice
+            print(io, "CUDA")
+        elseif p.device isa ROCDevice
+            print(io, "ROCm")
         else
-            println("<unknown device>")
+            print(io, "<unknown device>")
         end
-        println(" - block size: ", p.block_size)
-    else
-        println()
+        println(io, " (block size: $(p.block_size))")
     end
-    println(" - use_MPI:    ", p.use_MPI)
-    println(" - ieee_bits:  ", sizeof(T) * 8)
-    println()
-    println(" - test:       ", p.test)
-    print(" - riemann:    ", p.riemann)
+    print_parameter(io, pad, "MPI", p.use_MPI)
+
+    println(io, " ", "─" ^ (pad*2+2))
+
+    print_parameter(io, pad, "test", p.test)
+    print_parameter(io, pad, "solver", p.riemann, nl=false)
+    print(io, ", ", p.scheme, " scheme")
     if p.scheme != :Godunov
-        println(", ", p.riemann_limiter)
-    else
-        println()
+        print("(with $(p.riemann_limiter))")
     end
-    println(" - scheme:     ", p.scheme)
-    println(" - splitting:  ", p.axis_splitting)
-    println(" - cfl:        ", p.cfl)
-    println(" - Dt:         ", p.Dt, p.dt_on_even_cycles ? ", updated only for even cycles" : "")
-    println(" - euler proj: ", p.projection)
-    println(" - cst dt:     ", p.cst_dt)
-    println(" - stencil width: ", p.stencil_width)
-    println(" - maxtime:    ", p.maxtime)
-    println(" - maxcycle:   ", p.maxcycle)
-    println()
-    println(" - domain:     ", p.nx, "×", p.ny, " (", p.nghost, " ghosts)")
-    println(" - domain size: ", join(p.domain_size, " × "), ", origin: (", join(p.origin, ", "), ")")
-    println(" - nbcell:     ", @sprintf("%g", p.nx * p.ny), " (", p.nbcell, " total)")
-    println(" - global:     ", p.global_grid[1], "×", p.global_grid[2])
-    println(" - proc grid:  ", p.proc_dims[1], "×", p.proc_dims[2], " ($(p.reorder_grid ? "" : "not ")reordered)")
-    println(" - coords:     ", p.cart_coords[1], "×", p.cart_coords[2], " (rank: ", p.rank, "/", p.proc_size-1, ")")
-    println(" - asynchronous communications: ", p.async_comms)
-    println(" - measure step times: ", p.measure_time)
-    if p.measure_hw_counters
-        println(" - hardware counters measured: ", p.hw_counters_options)
-    end
-    println()
+    proj_str = p.projection === :euler ? "1ˢᵗ order" : p.projection === :euler_2nd ? "2ⁿᵈ order" : "<unknown>"
+    println(io, ", ", proj_str, " projection")
+    print_parameter(io, pad, "axis splitting", p.axis_splitting)
+    print_parameter(io, pad, "time step", "", nl=false)
+    print(io, p.Dt != 0 ? "starting at $(p.Dt), " :  "initiatlized automatically, ")
+    p.cst_dt && print(io, "constant, ")
+    println(io, "updated ", p.dt_on_even_cycles ? "only at even cycles" : "every cycle")
+    print_parameter(io, pad, "CFL", p.cfl)
+
+    println(io, " ", "─" ^ (pad*2+2))
+
+    print_parameter(io, pad, "max time", p.maxtime, suffix=" sec")
+    print_parameter(io, pad, "max cycle", p.maxcycle)
+    print_parameter(io, pad, "measure step times", p.measure_time)
+    print_parameter(io, pad, "verbosity", p.silent)
+
     if p.write_output
-        println(" - write output: ", p.write_output, " (precision: ", p.output_precision, " digits)")
-        println(" - write ghosts: ", p.write_ghosts)
-        println(" - output file: ", p.output_file)
+        print_parameter(io, pad, "write output", p.write_output, nl=false)
+        print(io, " (precision: $(p.output_precision) digits)")
+        println(io, p.write_ghosts ? "with ghosts" : "")
+        print_parameter(io, pad, "to", "'$(p.output_file)'")
+        p.write_slices && print_parameter(io, pad, "write slices", p.write_slices)
         if p.compare
-            println(" - compare: ", p.compare, p.is_ref ? ", as reference" : "")
-            println(" - tolerance: ", p.comparison_tolerance)
+            print_parameter(io, pad, "compare", p.compare, nl=false)
+            println(io, p.is_ref ? ", as reference" : "with $(p.comparison_tolerance) of tolerance")
         end
-        println()
+    end
+
+    println(io, " ", "─" ^ (pad*2+2))
+
+    domain_str = p.use_MPI ? "sub-domain" : "domain"
+    print_parameter(io, pad, domain_str, "$(p.nx)×$(p.ny) with $(p.nghost) ghosts", nl=false)
+    println(io, " (", @sprintf("%g", p.nx * p.ny), " real cells, ", @sprintf("%g", p.nbcell), " in total)")
+    print_parameter(io, pad, "domain size", join(p.domain_size, " × "), nl=false)
+    println(io, ", origin: (", join(p.origin, ", "), ")")
+
+    if p.use_MPI
+        print_parameter(io, pad, "global domain", join(p.global_grid, "×"), nl=false)
+        print(io, ", spread on a ", join(p.proc_dims, "×"), " process grid")
+        print(io, " (", p.reorder_grid ? "" : "not ", "reordered)")
+        println(io, " ($(p.proc_size) in total)")
+        print_parameter(io, pad, "coords", join(p.cart_coords, "×"), nl=false)
+        print(io, " (rank: ", p.rank, "/", p.proc_size-1, ")")
+        neighbours_list = filter(≠(MPI.PROC_NULL) ∘ last, p.neighbours) |> collect .|> first
+        neighbours_str = join(neighbours_list, ", ", " and ") |> lowercase
+        print(io, ", with $(neighbour_count(p)) neighbour", neighbour_count(p) != 1 ? "s" : "")
+        println(io, neighbour_count(p) > 0 ? " on the " * neighbours_str : "")
+        print_parameter(io, pad, "async comms", p.async_comms, nl=false)
+    else
+        print_parameter(io, pad, "async code path", p.async_comms, nl=false)
     end
 end
+
+
+print_parameters(p::ArmonParameters) = print_parameters(stdout, p)
+
+
+Base.show(io::IO, p::ArmonParameters) = print_parameters(io::IO, p::ArmonParameters)
 
 
 """

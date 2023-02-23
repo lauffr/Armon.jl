@@ -24,7 +24,7 @@ end
 function run_armon_reference(ref_params::ArmonParameters{T}) where T
     data = ArmonDualData(ref_params)
     init_test(ref_params, data)
-    dt, cycles, _, _ = time_loop(ref_params, data)
+    dt, cycles, _ = time_loop(ref_params, data)
     return dt, cycles, data
 end
 

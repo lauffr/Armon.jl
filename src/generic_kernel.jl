@@ -298,25 +298,10 @@ Gives options for `@generic_kernel` to adjust the resulting functions.
 The possible options are:
  - `debug`:
         Prints the generated functions to stdout at compile time.
- - `add_time`: 
-        Adds the execution time measurement macros to the calls to the kernel functions 
-        (`@time_event`, `@time_expr`...).
- - `async`: 
-        If the kernel is to be called asynchronously. This only changes the calls to the macros 
-        added by the `add_time` option.
- - `label`:
-        Given in the form `label=name`, `name` will be passed to the macros added by the `add_time`
-        option as the label for the kernel.
- - `dynamic_label`:
-        Adds the `step_label::String` parameter to the main kernel function, after `params` (and 
-        `data` if present). `step_label` will be passed to the macros added by the `add_time` option 
-        as the label for the kernel.
- - `no_gpu`:
-        Ignores `params.use_gpu` at runtime and only create the CPU kernel.
 
 ```julia
 @generic_kernel function add_kernel(a, b)
-    @kernel_options(add_time, label=add_vectors)
+    @kernel_options(debug)
     i = @index_1D_lin()
     a[i] += b[i]
 end
@@ -357,12 +342,7 @@ struct KernelWithoutThreading end
 
 
 const default_kernel_options = Dict(
-    :debug => false,
-    :add_time => false,
-    :async => false,
-    :dynamic_label => false,
-    :label => nothing,
-    :no_gpu => false,
+    :debug => false
 )
 
 
@@ -632,13 +612,9 @@ function transform_kernel(func::Expr)
 
     pushfirst!(gpu_def[:args], gpu_loop_params...)
 
-    if !options[:no_gpu]
-        # Define the GPU kernel with KernelAbstractions' @kernel
-        gpu_block = quote
-            @kernel $(combinedef(gpu_def))
-        end
-    else
-        gpu_block = Expr(:block)
+    # Define the GPU kernel with KernelAbstractions' @kernel
+    gpu_block = quote
+        @kernel $(combinedef(gpu_def))
     end
 
     # -- Wrapping function --
@@ -692,27 +668,6 @@ function transform_kernel(func::Expr)
     # Equivalent to: gpu_kernel_func(loop_params_names..., args...; ndrange, dependencies)
     gpu_call = Expr(:call, :gpu_kernel_func, Expr(:parameters, :ndrange, :dependencies), gpu_loop_params_names..., call_args...)
 
-    # Add time measurements if needed
-    if options[:add_time]
-        cpu_timing_macro = options[:async] ? Symbol("@time_expr_a")  : Symbol("@time_expr")
-        gpu_timing_macro = options[:async] ? Symbol("@time_event_a") : Symbol("@time_event")
-
-        if options[:dynamic_label]
-            label = :step_label
-            # Add the label to the arguments, after `params` and `data`
-            insert!(main_def[:args], isempty(data_args) ? 2 : 3, :(step_label::String))
-        elseif !isnothing(options[:label])
-            label = String(options[:label])
-        else
-            label = String(func_name)
-        end
-
-        # Wrap the calls with the timing macros.
-        # The LineNumberNode is mandatory (see https://discourse.julialang.org/t/expr-malforming-in-julia-v-0-7/10393/2)
-        cpu_call = Expr(:macrocall, cpu_timing_macro, LineNumberNode(@__LINE__, @__FILE__), label, cpu_call)
-        gpu_call = Expr(:macrocall, gpu_timing_macro, LineNumberNode(@__LINE__, @__FILE__), label, gpu_call)
-    end
-
     cpu_call_block = quote
         wait(dependencies)  # The CPU side is synchronous
         $setup_cpu_call
@@ -726,15 +681,11 @@ function transform_kernel(func::Expr)
         return $gpu_call  # ...then call it
     end
 
-    if options[:no_gpu]
-        call_block = cpu_call_block
-    else
-        call_block = quote 
-            if params.use_gpu
-                $gpu_call_block
-            else
-                $cpu_call_block
-            end
+    call_block = quote 
+        if params.use_gpu
+            $gpu_call_block
+        else
+            $cpu_call_block
         end
     end
 

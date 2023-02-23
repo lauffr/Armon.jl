@@ -1,7 +1,6 @@
 
 @generic_kernel function boundaryConditions!(stencil_width::Int, stride::Int, i_start::Int, d::Int,
         u_factor::T, v_factor::T, rho::V, umat::V, vmat::V, pmat::V, cmat::V, gmat::V, Emat::V) where {T, V <: AbstractArray{T}}
-    @kernel_options(add_time, label=boundaryConditions!)
 
     idx = @index_1D_lin()
     i  = idx * stride + i_start
@@ -24,7 +23,6 @@ end
 
 @generic_kernel function read_border_array!(side_length::Int, nghost::Int,
         rho::V, umat::V, vmat::V, pmat::V, cmat::V, gmat::V, Emat::V, value_array::V) where V
-    @kernel_options(add_time, label=border_array)
 
     idx = @index_2D_lin()
     itr = @iter_idx()
@@ -44,7 +42,6 @@ end
 
 @generic_kernel function write_border_array!(side_length::Int, nghost::Int,
         rho::V, umat::V, vmat::V, pmat::V, cmat::V, gmat::V, Emat::V, value_array::V) where V
-    @kernel_options(add_time, label=border_array)
 
     idx = @index_2D_lin()
     itr = @iter_idx()
@@ -124,7 +121,7 @@ function boundaryConditions!(params::ArmonParameters, data::ArmonDualData, sides
     dependencies = MultiEvent(tuple(events...))
 
     if params.use_MPI && !params.async_comms
-        return post_boundary_conditions(params, data; dependencies)
+        return @timeit params.timer "Post BC" post_boundary_conditions(params, data; dependencies)
     end
 
     return dependencies
