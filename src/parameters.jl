@@ -362,7 +362,20 @@ function print_parameters(io::IO, p::ArmonParameters; pad = 20)
     end
     proj_str = p.projection === :euler ? "1ˢᵗ order" : p.projection === :euler_2nd ? "2ⁿᵈ order" : "<unknown>"
     println(io, ", ", proj_str, " projection")
-    print_parameter(io, pad, "axis splitting", p.axis_splitting)
+    print_parameter(io, pad, "axis splitting", "", nl=false)
+    if p.axis_splitting === :Sequential
+        println(io, "X, Y ; X, Y")
+    elseif p.axis_splitting === :SequentialSym
+        println(io, "X, Y ; Y, X")
+    elseif p.axis_splitting === :Strang
+        println(io, "½X, Y, ½X ; ½Y, X, ½Y")
+    elseif p.axis_splitting === :X_only
+        println(io, "X ; X")
+    elseif p.axis_splitting === :Y_only
+        println(io, "Y ; Y")
+    else
+        println(io, "<unknown>")
+    end
     print_parameter(io, pad, "time step", "", nl=false)
     print(io, p.Dt != 0 ? "starting at $(p.Dt), " :  "initiatlized automatically, ")
     p.cst_dt && print(io, "constant, ")
