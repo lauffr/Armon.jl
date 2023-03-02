@@ -204,7 +204,8 @@ end
 function copy_to_send_buffer!(data::ArmonDualData{D, H}, array::D, buffer::H;
         dependencies=NoneEvent()) where {D, H}
     array_data = view(array, 1:length(buffer))
-    async_copy!(device_type(data), buffer, array_data; dependencies)
+    wait(dependencies)  # We cannot wait for CPU events on the GPU
+    return async_copy!(device_type(data), buffer, array_data)
 end
 
 
@@ -218,7 +219,8 @@ end
 function copy_from_recv_buffer!(data::ArmonDualData{D, H}, array::D, buffer::H;
         dependencies=NoneEvent()) where {D, H}
     array_data = view(array, 1:length(buffer))
-    return async_copy!(device_type(data), array_data, buffer; dependencies)
+    wait(dependencies)  # We cannot wait for CPU events on the GPU
+    return async_copy!(device_type(data), array_data, buffer)
 end
 
 
