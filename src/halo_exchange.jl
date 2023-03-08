@@ -82,6 +82,24 @@ function write_border_array!(params::ArmonParameters, data::ArmonDualData, comm_
 end
 
 
+function copy_border_array_to_buffer!(params::ArmonParameters, data::ArmonDualData, side::Side;
+        dependencies=NoneEvent())
+    comm_array = get_send_comm_array(data, side)
+    dependencies = read_border_array!(params, data, comm_array, side; dependencies)
+    dependencies = copy_to_send_buffer!(data, comm_array, side; dependencies)
+    return dependencies
+end
+
+
+function copy_buffer_to_border_array!(params::ArmonParameters, data::ArmonDualData, side::Side;
+        dependencies=NoneEvent())
+    comm_array = get_recv_comm_array(data, side)
+    dependencies = copy_from_recv_buffer!(data, comm_array, side; dependencies)
+    dependencies = write_border_array!(params, data, comm_array, side; dependencies)
+    return dependencies
+end
+
+
 function boundaryConditions!(params::ArmonParameters{T}, data::ArmonDualData, side::Side;
         dependencies=NoneEvent()) where T
     if !has_neighbour(params, side)
@@ -95,14 +113,31 @@ function boundaryConditions!(params::ArmonParameters{T}, data::ArmonDualData, si
             u_factor, v_factor; dependencies)
     else
         # Exchange with the neighbour the cells on the side
-        comm_array = get_send_comm_array(data, side)
-        dependencies = read_border_array!(params, data, comm_array, side; dependencies)
-        dependencies = copy_to_send_buffer!(data, comm_array, side; dependencies)
+        dependencies = copy_border_array_to_buffer!(params, data, side; dependencies)
 
-        # Schedule the exchange to start when the copy is done
-        return Event(data.requests[side]; dependencies) do requests
-            MPI.Start(requests.send)
-            MPI.Start(requests.recv)
+        if params.use_MPI && params.async_comms
+            # Schedule the asynchronous exchange to start when the copy is done
+            return Event(data.requests[side]; dependencies) do requests
+                MPI.Start(requests.send)
+                MPI.Start(requests.recv)
+            end
+        else
+            # Launch the communications and wait for their completion now in order to be able to 
+            # measure them. 
+            wait(dependencies)
+
+            @timeit params.timer "MPI" begin
+                send_request = data.requests[side].send
+                recv_request = data.requests[side].recv
+
+                MPI.Start(send_request)
+                MPI.Start(recv_request)
+
+                MPI.Wait(send_request)
+                MPI.Wait(recv_request)
+            end
+
+            return copy_buffer_to_border_array!(params, data, side)
         end
     end
 end
@@ -114,15 +149,21 @@ function boundaryConditions!(params::ArmonParameters, data::ArmonDualData, sides
     #   https://www.open-mpi.org/faq/?category=runcuda
     # TODO : use CUDA/ROCM-aware MPI
 
+    if !(params.use_MPI && params.async_comms)
+        # We need a special ordering for synchronous communications in order to avoid deadlocks.
+        # This method makes each successive sub-domain do their sides in reverse, therefore two
+        # neighbouring sub-domains will attempt to exchange their cells at the same time:
+        # ... (left then right) ; (right then left) ; (left then right) ; (right then left) ...
+        if isodd(grid_coord_along(params))
+            sides = reverse(sides)
+        end
+    end
+
     events = Event[]
     for side in sides
         push!(events, boundaryConditions!(params, data, side; dependencies))
     end
     dependencies = MultiEvent(tuple(events...))
-
-    if params.use_MPI && !params.async_comms
-        return @timeit params.timer "Post BC" post_boundary_conditions(params, data; dependencies)
-    end
 
     return dependencies
 end
@@ -158,10 +199,7 @@ function post_boundary_conditions(params::ArmonParameters, data::ArmonDualData;
 
     recv_events = map(iter_recv_requests(data)) do (side, recv_request)
         recv_deps = Event(MPI.Wait, recv_request; dependencies)
-        comm_array = get_recv_comm_array(data, side)
-        recv_deps = copy_from_recv_buffer!(data, comm_array, side; dependencies=recv_deps)
-        recv_deps = write_border_array!(params, data, comm_array, side; dependencies=recv_deps)
-        return recv_deps
+        return copy_buffer_to_border_array!(params, data, side; dependencies=recv_deps)
     end
 
     return MultiEvent((send_events..., recv_events...))

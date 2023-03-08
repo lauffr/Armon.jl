@@ -127,10 +127,20 @@ device_type(data::ArmonDualData) = data.device
 device(data::ArmonDualData) = data.device_data
 host(data::ArmonDualData) = data.host_data
 
+"""
+    iter_send_requests(data::ArmonDualData)
+
+Iterator over all active MPI send requests
+"""
 iter_send_requests(data::ArmonDualData) = 
     Iterators.map(p -> first(p) => first(last(p)), 
         Iterators.filter(!MPI.isnull ∘ first ∘ last, data.requests))
 
+"""
+    iter_recv_requests(data::ArmonDualData)
+
+Iterator over all active MPI receive requests
+"""
 iter_recv_requests(data::ArmonDualData) = 
     Iterators.map(p -> first(p) => last(last(p)), 
         Iterators.filter(!MPI.isnull ∘ last ∘ last, data.requests))
