@@ -202,5 +202,7 @@ function post_boundary_conditions(params::ArmonParameters, data::ArmonDualData;
         return copy_buffer_to_border_array!(params, data, side; dependencies=recv_deps)
     end
 
-    return MultiEvent((send_events..., recv_events...))
+    dependencies = MultiEvent((send_events..., recv_events...))
+    wait(dependencies)  # TODO: temporary solution for preventing the GPU to wait for CPU events
+    return NoneEvent()
 end

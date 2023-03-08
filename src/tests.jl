@@ -55,47 +55,45 @@ test_region_high(x::T, y::T, ::Sod_circ)  where T = (x - T(0.5))^2 + (y - T(0.5)
 test_region_high(x::T, _::T, ::Bizarrium) where T = x ≤ 0.5
 test_region_high(x::T, y::T, s::Sedov{T}) where T = x^2 + y^2 ≤ s.r^2
 
-InitParams = @NamedTuple{γ, high_ρ, low_ρ, high_E, low_E, high_u, low_u, high_v, low_v}
-
-function init_test_params(::Union{Sod, Sod_y, Sod_circ})::InitParams
+function init_test_params(::Union{Sod, Sod_y, Sod_circ})
     return (
-        γ      = 7/5,
-        high_ρ = 1.,
-        low_ρ  = 0.125,
-        high_E = 2.5,
-        low_E  = 2.0,
-        high_u = 0.,
-        low_u  = 0.,
-        high_v = 0.,
-        low_v  = 0.
+        #= γ      =# 7/5,
+        #= high_ρ =# 1.,
+        #= low_ρ  =# 0.125,
+        #= high_E =# 2.5,
+        #= low_E  =# 2.0,
+        #= high_u =# 0.,
+        #= low_u  =# 0.,
+        #= high_v =# 0.,
+        #= low_v  =# 0.
     )
 end
 
-function init_test_params(::Bizarrium)::InitParams
+function init_test_params(::Bizarrium)
     return (
-        γ      = 2,
-        high_ρ = 1.42857142857e+4,
-        low_ρ  = 10000.,
-        high_E = 4.48657821135e+6,
-        low_E  = 0.5 * 250^2,
-        high_u = 0.,
-        low_u  = 250.,
-        high_v = 0.,
-        low_v  = 0.
+        #= γ      =# 2,
+        #= high_ρ =# 1.42857142857e+4,
+        #= low_ρ  =# 10000.,
+        #= high_E =# 4.48657821135e+6,
+        #= low_E  =# 0.5 * 250^2,
+        #= high_u =# 0.,
+        #= low_u  =# 250.,
+        #= high_v =# 0.,
+        #= low_v  =# 0.
     )
 end
 
-function init_test_params(p::Sedov)::InitParams
+function init_test_params(p::Sedov)
     return (
-        γ      = 7/5,
-        high_ρ = 1.,
-        low_ρ  = 1.,
-        high_E = 0.851072 / (π * p.r^2),
-        low_E  = 2.5e-14,
-        high_u = 0.,
-        low_u  = 0.,
-        high_v = 0.,
-        low_v  = 0.
+        #= γ      =# 7/5,
+        #= high_ρ =# 1.,
+        #= low_ρ  =# 1.,
+        #= high_E =# 0.851072 / (π * p.r^2),
+        #= low_E  =# 2.5e-14,
+        #= high_u =# 0.,
+        #= low_u  =# 0.,
+        #= high_v =# 0.,
+        #= low_v  =# 0.
     )
 end
 
