@@ -5,6 +5,9 @@ import Armon: read_border_array!, copy_to_send_buffer!, copy_from_recv_buffer!, 
 import Armon: get_recv_comm_array, get_send_comm_array, send_buffer, recv_buffer
 
 using MPI
+using CUDA: device as device_of
+using AMDGPU
+
 MPI.Init()
 MPI.Barrier(MPI.COMM_WORLD)
 
@@ -93,7 +96,7 @@ end
 
 
 function ref_params_for_sub_domain(test::Symbol, type::Type, px, py; overriden_options...)
-    ref_options = Dict(
+    ref_options = Dict{Symbol, Any}(
         :use_MPI => true, :px => px, :py => py, :reorder_grid => true, :async_comms => false
     )
     merge!(ref_options, overriden_options)
@@ -108,7 +111,6 @@ function set_comm_for_grid(px, py)
     in_grid = global_rank < new_grid_size
     color = in_grid ? 0 : MPI.API.MPI_UNDEFINED[]
     sub_comm = MPI.Comm_split(MPI.COMM_WORLD, color, global_rank)
-    Armon.set_world_comm(sub_comm)
     return sub_comm, in_grid
 end
 
@@ -155,10 +157,10 @@ macro root_test(expr, kws...)
 end
 
 
-function test_neighbour_coords(px, py, proc_in_grid)
+function test_neighbour_coords(px, py, proc_in_grid, global_comm)
     !proc_in_grid && return
 
-    ref_params = ref_params_for_sub_domain(:Sod, Float64, px, py)
+    ref_params = ref_params_for_sub_domain(:Sod, Float64, px, py; global_comm)
     coords = ref_params.cart_coords
 
     for (coord, sides) in ((coords[1], (Left, Right)), (coords[2], (Bottom, Top))), 
@@ -182,11 +184,11 @@ NX = 100
 NY = 100
 using Printf
 
-function dump_neighbours(px, py, proc_in_grid)
+function dump_neighbours(px, py, proc_in_grid, global_comm)
     !proc_in_grid && return
 
-    ref_params = ref_params_for_sub_domain(:Sod, Float64, px, py; nx=NX, ny=NY)
-    
+    ref_params = ref_params_for_sub_domain(:Sod, Float64, px, py; nx=NX, ny=NY, global_comm)
+
     coords = ref_params.cart_coords
 
     neighbour_coords = Dict{Side, Tuple{Int, Int}}()
@@ -250,10 +252,10 @@ function check_domain_idx(array, domain, val, my_rank, neighbour_rank)
 end
 
 
-function test_halo_exchange(px, py, proc_in_grid)
+function test_halo_exchange(px, py, proc_in_grid, global_comm)
     !proc_in_grid && return
 
-    ref_params = ref_params_for_sub_domain(:Sod, Int64, px, py; nx=NX, ny=NY)
+    ref_params = ref_params_for_sub_domain(:Sod, Int64, px, py; nx=NX, ny=NY, global_comm)
     data = ArmonDualData(ref_params)
     coords = ref_params.cart_coords
 
@@ -318,21 +320,21 @@ total_proc_count = MPI.Comm_size(MPI.COMM_WORLD)
             comm, proc_in_grid = MPI.COMM_NULL, false
         end
 
-        # dump_neighbours(px, py, proc_in_grid)
+        # dump_neighbours(px, py, proc_in_grid, comm)
 
         @testset "Neighbours" begin
-            test_neighbour_coords(px, py, proc_in_grid)
+            test_neighbour_coords(px, py, proc_in_grid, comm)
         end
 
         @testset "Halo exchange" begin
-            test_halo_exchange(px, py, proc_in_grid)
+            test_halo_exchange(px, py, proc_in_grid, comm)
         end
 
         @testset "Reference" begin
             @testset "$test with $type" for type in (Float64,),
                                             test in (:Sod, :Sod_y, :Sod_circ, :Sedov, :Bizarrium)
                 @MPI_test comm begin
-                    ref_params = ref_params_for_sub_domain(test, type, px, py; nx=NX, ny=NY)
+                    ref_params = ref_params_for_sub_domain(test, type, px, py; nx=NX, ny=NY, global_comm=comm)
                     dt, cycles, data = run_armon_reference(ref_params)
                     ref_dt, ref_cycles, ref_data = ref_data_for_sub_domain(ref_params)
 
@@ -359,7 +361,7 @@ total_proc_count = MPI.Comm_size(MPI.COMM_WORLD)
             @testset "$test with $type" for type in (Float64,),
                                             test in (:Sod, :Sod_y, :Sod_circ, :Sedov, :Bizarrium)
                 @MPI_test comm begin
-                    ref_params = ref_params_for_sub_domain(test, type, px, py; async_comms=true, nx=NX, ny=NY)
+                    ref_params = ref_params_for_sub_domain(test, type, px, py; async_comms=true, nx=NX, ny=NY, global_comm=comm)
                     dt, cycles, data = run_armon_reference(ref_params)
                     ref_dt, ref_cycles, ref_data = ref_data_for_sub_domain(ref_params)
 
@@ -376,7 +378,7 @@ total_proc_count = MPI.Comm_size(MPI.COMM_WORLD)
         @testset "Conservation" begin
             @testset "$test" for test in (:Sod, :Sod_y, :Sod_circ)
                 if enough_processes && proc_in_grid
-                    ref_params = ref_params_for_sub_domain(test, Float64, px, py; maxcycle=10000, maxtime=10000, nx=NX, ny=NY)
+                    ref_params = ref_params_for_sub_domain(test, Float64, px, py; maxcycle=10000, maxtime=10000, nx=NX, ny=NY, global_comm=comm)
 
                     data = ArmonDualData(ref_params)
                     init_test(ref_params, data)
@@ -392,6 +394,14 @@ total_proc_count = MPI.Comm_size(MPI.COMM_WORLD)
                 @root_test   init_mass ≈ end_mass    atol=1e-12  skip=!enough_processes
                 @root_test init_energy ≈ end_energy  atol=1e-12  skip=!enough_processes
             end
+        end
+
+        @testset "CUDA GPU" begin
+            no_cuda = !CUDA.has_cuda_gpu()
+        end
+
+        @testset "ROCm GPU" begin
+            no_rocm = !AMDGPU.has_rocm_gpu()
         end
 
         # TODO: thread pinning tests (no overlaps, no gaps)
