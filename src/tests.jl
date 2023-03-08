@@ -110,7 +110,13 @@ function boundaryCondition(side::Side, ::Sod_circ)::NTuple{2, Int}
 end
 
 function boundaryCondition(side::Side, ::Bizarrium)::NTuple{2, Int}
-    return (side == Left) ? (-1, 1) : (1, -1)
+    if side == Left
+        return (-1, 1)
+    elseif side == Right
+        return (1, 1)
+    else
+        return (1, -1)
+    end
 end
 
 function boundaryCondition(::Side, ::Sedov)::NTuple{2, Int}
