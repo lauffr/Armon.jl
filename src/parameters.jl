@@ -339,6 +339,7 @@ function print_parameters(io::IO, p::ArmonParameters; pad = 20)
         print_parameter(io, pad, "use_gpu", false)
     else
         print_parameter(io, pad, "GPU", true, nl=false)
+        print(io, ": ")
         if p.device isa CPU
             print(io, "KA.jl's CPU backend")
         elseif p.device isa CUDADevice
