@@ -6,11 +6,25 @@ using ThreadPinning
 using KernelAbstractions
 using MPI
 using MacroTools
-using AMDGPU
-using ROCKernels
-using CUDA
-using CUDAKernels
 using TimerOutputs
+
+const CPU_ONLY = get(ENV, "ARMON_CPU_ONLY", false)
+
+const NO_CUDA = get(ENV, "ARMON_NO_CUDA", false) || CPU_ONLY
+if NO_CUDA
+    struct CUDADevice end
+else
+    using CUDA
+    using CUDAKernels
+end
+
+const NO_ROCM = get(ENV, "ARMON_NO_CUDA", false) || CPU_ONLY
+if NO_ROCM
+    struct ROCDevice end 
+else
+    using AMDGPU
+    using ROCKernels
+end
 
 export ArmonParameters, ArmonDualData, SolverStats, armon, data_type, memory_required
 export device_to_host!, host_to_device!, host, device, saved_variables, main_variables
