@@ -240,8 +240,12 @@ function ArmonParameters(;
         armon_cpp = CMakeKokkosProject(armon_cpp_lib_src, "libarmon_cpp";
             build_dir=armon_cpp_lib_build, cmake_options, kokkos_options)
         option!(armon_cpp, "USE_SINGLE_PRECISION", flt_type == Float32; prefix="")
-        # option!(armon_cpp, "CHECK_VIEW_ORDER", true; prefix="")
-        compile(armon_cpp)
+        if use_MPI
+            is_root && compile(armon_cpp)
+            MPI.Barrier(global_comm)
+        else
+            compile(armon_cpp)
+        end
         kokkos_lib = Kokkos.load_lib(armon_cpp)
         device = Kokkos.DEFAULT_DEVICE_SPACE()
     else
