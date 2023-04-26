@@ -72,8 +72,8 @@ rel_tol(::Flt) where {Flt <: AbstractFloat} = rel_tol(Flt)
 
 
 function count_differences(ref_params::ArmonParameters{T}, 
-        data::ArmonData{V}, ref_data::ArmonData{V};
-        atol=abs_tol(T), rtol=rel_tol(T)) where {T, V <: AbstractArray{T}}
+        data::ArmonData, ref_data::ArmonData;
+        atol=abs_tol(T), rtol=rel_tol(T)) where {T}
     (; nx, ny) = ref_params
     @indexing_vars(ref_params)
 
@@ -97,7 +97,7 @@ end
 
 
 function compare_with_reference_data(ref_params::ArmonParameters{T}, dt::T, cycles::Int, 
-        data::ArmonData{V}, ref_data::ArmonData{V}) where {T, V <: AbstractArray{T}}
+        data::ArmonData, ref_data::ArmonData) where {T}
     ref_file_name = get_reference_data_file_name(ref_params.test, T)
 
     atol = abs_tol(T)

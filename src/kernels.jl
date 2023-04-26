@@ -435,6 +435,8 @@ function local_time_step(params::ArmonParameters{T}, data::ArmonData{V}, prev_dt
     if params.cst_dt
         # Constant time step
         return Dt
+    elseif params.use_kokkos
+        dt = kokkos_dtCFL(params, data, ideb:ifin)
     elseif params.use_gpu && params.device isa ROCDevice
         # AMDGPU supports ArrayProgramming, but AMDGPU.mapreduce! is not as efficient as 
         # CUDA.mapreduce! for large broadcasted arrays. Therefore we first compute all time
@@ -520,7 +522,9 @@ function conservation_vars(params::ArmonParameters{T}, data::ArmonDualData) wher
     total_mass::T = zero(T)
     total_energy::T = zero(T)
 
-    if params.use_gpu
+    if params.use_kokkos
+        total_mass, total_energy = kokkos_conservation_vars(params, device(data), ideb:ifin)
+    elseif params.use_gpu
         total_mass = @inbounds reduce(+, @views (
             rho[ideb:ifin] .* domain_mask[ideb:ifin] .* (dx * dx)))
         total_energy = @inbounds reduce(+, @views (

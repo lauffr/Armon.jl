@@ -29,26 +29,31 @@ end
 ArmonData(params::ArmonParameters{T}) where T = ArmonData(T, params.nbcell)
 ArmonData(type::Type, size::Int64) = ArmonData(Vector{type}, size)
 
-function ArmonData(array::Type{V}, size::Int64) where {V <: AbstractArray}
-    return ArmonData{array}(
-        array(undef, size),
-        array(undef, size),
-        array(undef, size),
-        array(undef, size),
-        array(undef, size),
-        array(undef, size),
-        array(undef, size),
-        array(undef, size),
-        array(undef, size),
-        array(undef, size),
-        array(undef, size),
-        array(undef, size),
-        array(undef, size),
-        array(undef, size),
-        array(undef, size),
-        array(undef, size)
+function ArmonData(array::Type{V}, size::Int64; kwargs...) where {V <: AbstractArray}
+    a1 = array(undef, size; alloc_array_kwargs(; label="x", kwargs...)...)
+    complete_array_type = typeof(a1)
+    return ArmonData{complete_array_type}(
+        a1,
+        array(undef, size; alloc_array_kwargs(; label="y", kwargs...)...),
+        array(undef, size; alloc_array_kwargs(; label="rho", kwargs...)...),
+        array(undef, size; alloc_array_kwargs(; label="umat", kwargs...)...),
+        array(undef, size; alloc_array_kwargs(; label="vmat", kwargs...)...),
+        array(undef, size; alloc_array_kwargs(; label="Emat", kwargs...)...),
+        array(undef, size; alloc_array_kwargs(; label="pmat", kwargs...)...),
+        array(undef, size; alloc_array_kwargs(; label="cmat", kwargs...)...),
+        array(undef, size; alloc_array_kwargs(; label="gmat", kwargs...)...),
+        array(undef, size; alloc_array_kwargs(; label="ustar", kwargs...)...),
+        array(undef, size; alloc_array_kwargs(; label="pstar", kwargs...)...),
+        array(undef, size; alloc_array_kwargs(; label="work_array_1", kwargs...)...),
+        array(undef, size; alloc_array_kwargs(; label="work_array_2", kwargs...)...),
+        array(undef, size; alloc_array_kwargs(; label="work_array_3", kwargs...)...),
+        array(undef, size; alloc_array_kwargs(; label="work_array_4", kwargs...)...),
+        array(undef, size; alloc_array_kwargs(; label="domain_mask", kwargs...)...)
     )
 end
+
+
+array_type(::ArmonData{V}) where V = V
 
 
 main_variables() = (:x, :y, :rho, :umat, :vmat, :Emat, :pmat, :cmat, :gmat, :ustar, :pstar, :domain_mask)
@@ -93,17 +98,17 @@ end
 
 
 function ArmonDualData(params::ArmonParameters{T}) where T
-    device_array = get_device_array(params){T}
-    host_array = get_host_array(params){T}
+    device_array = get_device_array(params){T, 1}
+    host_array = get_host_array(params){T, 1}
 
-    device_data = ArmonData(device_array, params.nbcell)
+    device_data = ArmonData(device_array, params.nbcell; alloc_device_kwargs(params)...)
     if host_array == device_array
         host_data = device_data
     else
-        host_data = ArmonData(host_array, params.nbcell)
+        host_data = ArmonData(host_array, params.nbcell; alloc_host_kwargs(params)...)
     end
 
-    # In case we don't use MPI since there is no neighbours no array is allocated
+    # In case we don't use MPI: since there is no neighbours no array is allocated
     comm_buffers = Dict{Side, NamedTuple{(:send, :recv), NTuple{2, MPI.Buffer{host_array}}}}()
     requests = Dict{Side, NamedTuple{(:send, :recv), NTuple{2, MPI.AbstractRequest}}}()
     for side in instances(Side)
@@ -119,7 +124,9 @@ function ArmonDualData(params::ArmonParameters{T}) where T
         )
     end
 
-    return ArmonDualData{device_array, host_array}(params.device, device_data, host_data, comm_buffers, requests)
+    return ArmonDualData{array_type(device_data), array_type(host_data)}(
+        params.device, device_data, host_data, comm_buffers, requests
+    )
 end
 
 
@@ -213,9 +220,15 @@ end
 
 function copy_to_send_buffer!(data::ArmonDualData{D, H}, array::D, buffer::H;
         dependencies=NoneEvent()) where {D, H}
-    array_data = view(array, 1:length(buffer))
-    wait(dependencies)  # We cannot wait for CPU events on the GPU
-    return async_copy!(device_type(data), buffer, array_data)
+    if device_type(data) isa Kokkos.ExecutionSpace
+        # Kokkos backend
+        error("Kokkos subview NYI")
+        return copyto!(buffer, array_data)
+    else
+        array_data = view(array, 1:length(buffer))
+        wait(dependencies)  # We cannot wait for CPU events on the GPU
+        return async_copy!(device_type(data), buffer, array_data)
+    end
 end
 
 
@@ -228,9 +241,15 @@ end
 
 function copy_from_recv_buffer!(data::ArmonDualData{D, H}, array::D, buffer::H;
         dependencies=NoneEvent()) where {D, H}
-    array_data = view(array, 1:length(buffer))
-    wait(dependencies)  # We cannot wait for CPU events on the GPU
-    return async_copy!(device_type(data), array_data, buffer)
+    if device_type(data) isa Kokkos.ExecutionSpace
+        # Kokkos backend
+        error("Kokkos subview NYI")
+        return copyto!(buffer, array_data)
+    else
+        array_data = view(array, 1:length(buffer))
+        wait(dependencies)  # We cannot wait for CPU events on the GPU
+        return async_copy!(device_type(data), array_data, buffer)
+    end
 end
 
 

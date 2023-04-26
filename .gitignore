@@ -2,3 +2,4 @@
 /docs/build/
 /docs/Manifest.toml
 .idea
+/.kokkos-build

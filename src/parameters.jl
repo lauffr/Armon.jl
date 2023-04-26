@@ -62,6 +62,7 @@ mutable struct ArmonParameters{Flt_T}
     use_threading::Bool
     use_simd::Bool
     use_gpu::Bool
+    use_kokkos::Bool
     device::GenericDevice
     block_size::Int
 
@@ -85,6 +86,10 @@ mutable struct ArmonParameters{Flt_T}
     compare::Bool
     is_ref::Bool
     comparison_tolerance::Float64
+
+    # Misc.
+    kokkos_project::Union{Nothing, CMakeKokkosProject}
+    kokkos_lib::Union{Nothing, Kokkos.CLibrary}
 end
 
 
@@ -104,6 +109,7 @@ function ArmonParameters(;
         measure_time = true,
         use_threading = true, use_simd = true,
         use_gpu = false, device = :CUDA, block_size = 1024,
+        use_kokkos = false, cmake_options = [], kokkos_options = nothing,
         use_MPI = true, px = 1, py = 1, reorder_grid = true, global_comm = nothing,
         async_comms = false,
         compare = false, is_ref = false, comparison_tolerance = 1e-10,
@@ -225,6 +231,24 @@ function ArmonParameters(;
         device = CPU()
     end
 
+    # Kokkos
+    if use_kokkos
+        !Kokkos.is_initialized() && error("'use_kokkos=true' but Kokkos has not yet been initialized")
+        Kokkos.require(types=[flt_type], dims=[1])
+        armon_cpp_lib_src = joinpath(@__DIR__, "..", "lib", "armon_cpp")
+        armon_cpp_lib_build = joinpath(Kokkos.KOKKOS_BUILD_DIR, "armon_cpp")
+        armon_cpp = CMakeKokkosProject(armon_cpp_lib_src, "libarmon_cpp";
+            build_dir=armon_cpp_lib_build, cmake_options, kokkos_options)
+        option!(armon_cpp, "USE_SINGLE_PRECISION", flt_type == Float32; prefix="")
+        # option!(armon_cpp, "CHECK_VIEW_ORDER", true; prefix="")
+        compile(armon_cpp)
+        kokkos_lib = Kokkos.load_lib(armon_cpp)
+        device = Kokkos.DEFAULT_DEVICE_SPACE()
+    else
+        armon_cpp = nothing
+        kokkos_lib = nothing
+    end
+
     # Initialize the test
     if isnothing(domain_size)
         domain_size = default_domain_size(test_type)
@@ -303,18 +327,21 @@ function ArmonParameters(;
         measure_time, timer,
         return_data,
 
-        use_threading, use_simd, use_gpu, device, block_size,
+        use_threading, use_simd, use_gpu, use_kokkos, device, block_size,
 
         use_MPI, is_root, rank, root_rank,
         proc_size, (px, py), global_comm, C_COMM, (cx, cy), neighbours, (g_nx, g_ny),
         reorder_grid, comm_array_size,
         async_comms,
 
-        compare, is_ref, comparison_tolerance
+        compare, is_ref, comparison_tolerance,
+
+        armon_cpp, kokkos_lib,
     )
 
     update_axis_parameters(params, first(split_axes(params))[1])
     update_steps_ranges(params)
+    use_kokkos && init_armon_cpp(params)
 
     return params
 end
@@ -329,7 +356,7 @@ end
 function print_parameters(io::IO, p::ArmonParameters; pad = 20)
     println(io, "Armon parameters")
     print_parameter(io, pad, "ieee_bits", sizeof(data_type(p)) * 8)
-    if !p.use_gpu
+    if !p.use_gpu && !p.use_kokkos
         print_parameter(io, pad, "multithreading", p.use_threading, nl=!p.use_threading)
         if p.use_threading
             println(io, " ($(Threads.nthreads()) $(use_std_lib_threads ? "standard " : "")thread",
@@ -337,6 +364,11 @@ function print_parameters(io::IO, p::ArmonParameters; pad = 20)
         end
         print_parameter(io, pad, "use_simd", p.use_simd)
         print_parameter(io, pad, "use_gpu", false)
+        print_parameter(io, pad, "use_kokkos", false)
+    elseif p.use_kokkos
+        print_parameter(io, pad, "use_kokkos", true)
+        print_parameter(io, pad, "device", nameof(Kokkos.main_space_type(p.device)))
+        print_parameter(io, pad, "memory", nameof(Kokkos.main_space_type(Kokkos.memory_space(p.device))))
     else
         print_parameter(io, pad, "GPU", true, nl=false)
         print(io, ": ")
@@ -421,9 +453,9 @@ function print_parameters(io::IO, p::ArmonParameters; pad = 20)
         neighbours_str = join(neighbours_list, ", ", " and ") |> lowercase
         print(io, ", with $(neighbour_count(p)) neighbour", neighbour_count(p) != 1 ? "s" : "")
         println(io, neighbour_count(p) > 0 ? " on the " * neighbours_str : "")
-        print_parameter(io, pad, "async comms", p.async_comms, nl=false)
+        print_parameter(io, pad, "async comms", p.async_comms)
     else
-        print_parameter(io, pad, "async code path", p.async_comms, nl=false)
+        print_parameter(io, pad, "async code path", p.async_comms)
     end
 end
 
@@ -460,15 +492,51 @@ function Base.copy(p::ArmonParameters{T}) where T
 end
 
 
-get_host_array(::ArmonParameters) = Vector
+function get_host_array(params::ArmonParameters)
+    if params.device isa Kokkos.ExecutionSpace
+        return Kokkos.View{T, D, Kokkos.DEFAULT_HOST_MEM_SPACE} where {T, D}
+    else
+        return Array
+    end
+end
+
 
 function get_device_array(params::ArmonParameters)
     if params.device isa CUDADevice
         return CuArray
     elseif params.device isa ROCDevice
         return ROCArray
+    elseif params.device isa Kokkos.ExecutionSpace
+        return Kokkos.View{T, D, Kokkos.DEFAULT_DEVICE_MEM_SPACE} where {T, D}
     else  # params.device isa CPU
-        return Vector
+        return Array
+    end
+end
+
+
+function alloc_host_kwargs(params::ArmonParameters)
+    if params.use_kokkos
+        return Base.Pairs(NamedTuple{(:use_label,), Tuple{Bool}}((true,)), (:use_label,))
+    else
+        return Base.Pairs((), ())
+    end
+end
+
+
+function alloc_device_kwargs(params::ArmonParameters)
+    if params.use_kokkos
+        return Base.Pairs(NamedTuple{(:use_label,), Tuple{Bool}}((true,)), (:use_label,))
+    else
+        return Base.Pairs((), ())
+    end
+end
+
+
+function alloc_array_kwargs(; label, kwargs...)
+    if haskey(kwargs, :use_label) && kwargs[:use_label]
+        return Base.Pairs(NamedTuple{(:label,), Tuple{String}}((label,)), (:label,))
+    else
+        return Base.Pairs((), ())
     end
 end
 

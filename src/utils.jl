@@ -30,4 +30,4 @@ end
 
 
 # ROCKernels uses AMDGPU's ROCDevice, unlike CUDAKernels and KernelsAbstractions
-GenericDevice = Union{Device, ROCDevice}
+GenericDevice = Union{Device, ROCDevice, Kokkos.ExecutionSpace}

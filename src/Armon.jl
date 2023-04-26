@@ -7,6 +7,7 @@ using KernelAbstractions
 using MPI
 using MacroTools
 using TimerOutputs
+using Kokkos
 
 const CPU_ONLY = get(ENV, "ARMON_CPU_ONLY", false)
 
@@ -35,6 +36,7 @@ export device_to_host!, host_to_device!, host, device, saved_variables, main_var
 # Rename some values in ArmonParameters & variables in ArmonData
 # Make a custom generic reduction kernel applicable on a domain, which allows to remove `domain_mask`
 # Monitor the removal of KA.jl's event system, and update the code accordingly
+# Use 2D arrays -> then views and cartesian indices become useful (same for Kokkos)
 
 include("utils.jl")
 include("domain_ranges.jl")
@@ -42,6 +44,7 @@ include("limiters.jl")
 include("tests.jl")
 include("parameters.jl")
 include("data.jl")
+include("cpp_interface.jl")
 include("generic_kernel.jl")
 include("kernels.jl")
 include("halo_exchange.jl")

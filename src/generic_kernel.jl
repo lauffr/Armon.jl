@@ -459,6 +459,69 @@ function pack_struct_fields(args, struct_t)
 end
 
 
+function make_kokkos_kernel_call(func_name, cpu_kernel_def, is_V_in_where, loop_params_names)
+    kokkos_def = deepcopy(cpu_kernel_def)
+    kokkos_def[:name] = Symbol("kokkos_", kokkos_def[:name])
+
+    kernel_def_args, _ = pack_struct_fields(kokkos_def[:args], ArmonParameters)
+
+    kernel_args = []
+    kernel_call = []
+    ccall_args = []
+    ccall_types = []
+    for arg in kernel_def_args
+        arg_name, arg_type, is_splat, _ = splitarg(arg)        
+        is_splat && error("splat argument is incompatible with ccall")
+
+        push!(kernel_args, isnothing(arg_name) ? :(::$arg_type) : :($arg_name::$arg_type))
+        push!(kernel_call, isnothing(arg_name) ? :($arg_type()) : :($arg_name))
+
+        (isnothing(arg_name) || arg_name === :test_case) && continue  # Skip unnamed arguments (method dispatch guides)
+
+        if is_V_in_where && arg_type === :V
+            push!(ccall_args, arg_name)
+            push!(ccall_types, :(Ref{V}))
+        elseif arg_name === :params || arg_name === :data
+            push!(ccall_args, :(pointer_from_objref($arg_name)))
+            push!(ccall_types, :(Ptr{Nothing}))
+        elseif arg_name in loop_params_names
+            push!(ccall_args, :(first($arg_name)), :(step($arg_name)), :(last($arg_name)))
+            push!(ccall_types, :(Int64), :(Int64), :(Int64))
+        else
+            push!(ccall_args, arg_name)
+            push!(ccall_types, arg_type)
+        end
+    end
+
+    kokkos_def[:args] = kernel_args
+
+    if is_V_in_where
+        kokkos_def[:whereparams] = map(kokkos_def[:whereparams]) do where_p
+            (where_p isa Expr && @capture(where_p, V <: AbstractArray{T})) || return where_p
+            return :(V <: Kokkos.View{T})
+        end
+    end
+
+    func_name = chopsuffix(string(func_name), "!") |> Symbol
+    func_name_quote = QuoteNode(func_name)
+
+    kokkos_def[:body] = quote
+        ccall(Kokkos.get_symbol(params.kokkos_lib, $func_name_quote), Cvoid, CCallTypes)
+    end
+
+    body_ccall_args = kokkos_def[:body].args[2].args
+    body_ccall_args[4] = Expr(:tuple, ccall_types...)  # CCallTypes => ($ccall_types...)
+    append!(body_ccall_args, ccall_args)
+
+    # The kernel is a @generated function, therefore we need to return the body expression
+    kokkos_def[:body] = QuoteNode(kokkos_def[:body])
+
+    kokkos_call = Expr(:call, kokkos_def[:name], kernel_call...)
+
+    return kokkos_def, kokkos_call
+end
+
+
 function transform_kernel(func::Expr)
     def = splitdef(func)
     func_name = def[:name]
@@ -528,6 +591,7 @@ function transform_kernel(func::Expr)
 
     # Add the extra parameters needed for the multi-threaded loop
     cpu_def[:args] = [:(params::ArmonParameters), loop_params..., args...]
+    original_cpu_def = deepcopy(cpu_def)
 
     cpu_def[:name] = Symbol("cpu_$func_name")  # Rename the CPU function
 
@@ -555,6 +619,13 @@ function transform_kernel(func::Expr)
     setup_cpu_call = quote
         threading = (!no_threading && params.use_threading) ? KernelWithThreading() : KernelWithoutThreading()
         simd      = params.use_simd ? KernelWithSIMD() : KernelWithoutSIMD()
+    end
+
+    # -- Kokkos --
+
+    kokkos_def, kokkos_call = make_kokkos_kernel_call(func_name, original_cpu_def, is_V_in_where, loop_params_names)
+    kokkos_block = quote
+        @generated $(combinedef(kokkos_def))
     end
 
     # -- GPU --
@@ -675,6 +746,11 @@ function transform_kernel(func::Expr)
         return NoneEvent()
     end
 
+    kokkos_call_block = quote
+        $kokkos_call
+        return NoneEvent()
+    end
+
     gpu_call_block = quote 
         gpu_kernel_func = $kernel_func_name(params.device, params.block_size)  # Get the right KernelAbstraction function...
         ndrange = $gpu_ndrange
@@ -684,6 +760,8 @@ function transform_kernel(func::Expr)
     call_block = quote 
         if params.use_gpu
             $gpu_call_block
+        elseif params.use_kokkos
+            $kokkos_call_block
         else
             $cpu_call_block
         end
@@ -703,6 +781,7 @@ function transform_kernel(func::Expr)
 
     kernel_def = quote
         $(cpu_block)
+        $(kokkos_block)
         $(gpu_block)
         $(main_block)
     end

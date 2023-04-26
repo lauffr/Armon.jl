@@ -33,6 +33,7 @@ if isinteractive()
      - convergence    Convergence to the reference solutions
      - conservation   Check that the energy and mass for each are kept constant throughout a lot of cycles.
      - GPU            Equivalence of the GPU backends (CUDA & ROCm) with the CPU
+     - kokkos         Equivalence of the Kokkos backend with the Julia CPU backend
      - performance    Checks for any regression in performance
      - async          Checks that separating the domain and treating the boundary conditions asynchronously 
                       doesn't introduce any variations in the result.
@@ -75,19 +76,20 @@ function do_tests(tests_to_do)
     ts = @testset "Armon.jl" begin
         for test in tests_to_do
             if !is_root
-                if test == :mpi            run_file("mpi.jl")
+                if test === :mpi            run_file("mpi.jl")
                 else
                     # the test is for a single process only
                 end
-            elseif test == :quality        run_file("code_quality.jl")
-            elseif test == :stability      run_file("type_stability.jl")
-            elseif test == :domains        run_file("domains.jl")
-            elseif test == :convergence    run_file("convergence.jl")
-            elseif test == :conservation   run_file("conservation.jl")
-            elseif test == :kernels        run_file("kernels.jl")
-            elseif test == :gpu            run_file("gpu.jl")
-            elseif test == :performance    run_file("performance.jl")
-            elseif test == :mpi            run_file("mpi.jl")
+            elseif test === :quality        run_file("code_quality.jl")
+            elseif test === :stability      run_file("type_stability.jl")
+            elseif test === :domains        run_file("domains.jl")
+            elseif test === :convergence    run_file("convergence.jl")
+            elseif test === :conservation   run_file("conservation.jl")
+            elseif test === :kernels        run_file("kernels.jl")
+            elseif test === :gpu            run_file("gpu.jl")
+            elseif test === :kokkos         run_file("kokkos.jl")
+            elseif test === :performance    run_file("performance.jl")
+            elseif test === :mpi            run_file("mpi.jl")
             else
                 error("Unknown test set: $test")
             end
