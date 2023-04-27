@@ -502,7 +502,9 @@ function make_kokkos_kernel_call(func_name, cpu_kernel_def, is_V_in_where, loop_
         end
     end
 
-    func_name = chopsuffix(string(func_name), "!") |> Symbol
+    if endswith(string(func_name), "!")
+        func_name = string(func_name)[1:end-1] |> Symbol
+    end
     func_name_quote = QuoteNode(func_name)
 
     kokkos_def[:body] = quote
