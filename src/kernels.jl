@@ -8,9 +8,10 @@ function acoustic_Godunov(ρᵢ::T, ρᵢ₋₁::T, cᵢ::T, cᵢ₋₁::T, uᵢ
 end
 
 
-@generic_kernel function acoustic!(s::Int, ustar_::V, pstar_::V, 
-        rho::V, u::V, pmat::V, cmat::V) where V
-
+@generic_kernel function acoustic!(
+    s::Int, ustar_::V, pstar_::V,
+    rho::V, u::V, pmat::V, cmat::V
+) where V
     i = @index_2D_lin()
     ustar_[i], pstar_[i] = acoustic_Godunov(
         rho[i], rho[i-s], cmat[i], cmat[i-s],
@@ -19,10 +20,11 @@ end
 end
 
 
-@generic_kernel function acoustic_GAD!(s::Int, dt::T, dx::T, 
-        ustar::V, pstar::V, rho::V, u::V, pmat::V, cmat::V,
-        ::LimiterType) where {T, V <: AbstractArray{T}, LimiterType <: Limiter}
-
+@generic_kernel function acoustic_GAD!(
+    s::Int, dt::T, dx::T,
+    ustar::V, pstar::V, rho::V, u::V, pmat::V, cmat::V,
+    ::LimiterType
+) where {T, V <: AbstractArray{T}, LimiterType <: Limiter}
     i = @index_2D_lin()
 
     # First order acoustic solver on the left cell
@@ -68,9 +70,10 @@ end
 end
 
 
-@generic_kernel function update_perfect_gas_EOS!(gamma::T, 
-        rho::V, Emat::V, umat::V, vmat::V, pmat::V, cmat::V, gmat::V) where {T, V <: AbstractArray{T}}
-
+@generic_kernel function update_perfect_gas_EOS!(
+    gamma::T, 
+    rho::V, Emat::V, umat::V, vmat::V, pmat::V, cmat::V, gmat::V
+) where {T, V <: AbstractArray{T}}
     i = @index_2D_lin()
     e = Emat[i] - 0.5 * (umat[i]^2 + vmat[i]^2)
     pmat[i] = (gamma - 1.) * rho[i] * e
@@ -80,8 +83,8 @@ end
 
 
 @generic_kernel function update_bizarrium_EOS!(
-        rho::V, umat::V, vmat::V, Emat::V, pmat::V, cmat::V, gmat::V) where {T, V <: AbstractArray{T}}
-
+    rho::V, umat::V, vmat::V, Emat::V, pmat::V, cmat::V, gmat::V
+) where {T, V <: AbstractArray{T}}
     i = @index_2D_lin()
 
     # O. Heuzé, S. Jaouen, H. Jourdren, 
@@ -121,9 +124,10 @@ end
 end
 
 
-@generic_kernel function cell_update!(s::Int, dx::T, dt::T, 
-        ustar::V, pstar::V, rho::V, u::V, Emat::V) where {T, V <: AbstractArray{T}}
-
+@generic_kernel function cell_update!(
+    s::Int, dx::T, dt::T, 
+    ustar::V, pstar::V, rho::V, u::V, Emat::V
+) where {T, V <: AbstractArray{T}}
     i = @index_2D_lin()
     dm = rho[i] * dx
     rho[i]   = dm / (dx + dt * (ustar[i+s] - ustar[i]))
@@ -132,10 +136,11 @@ end
 end
 
 
-@generic_kernel function euler_projection!(s::Int, dx::T, dt::T,
-        ustar::V, rho::V, umat::V, vmat::V, Emat::V,
-        advection_ρ::V, advection_uρ::V, advection_vρ::V, advection_Eρ::V) where {T, V <: AbstractArray{T}}
-
+@generic_kernel function euler_projection!(
+    s::Int, dx::T, dt::T,
+    ustar::V, rho::V, umat::V, vmat::V, Emat::V,
+    advection_ρ::V, advection_uρ::V, advection_vρ::V, advection_Eρ::V
+) where {T, V <: AbstractArray{T}}
     i = @index_2D_lin()
 
     dX = dx + dt * (ustar[i+s] - ustar[i])
@@ -152,12 +157,12 @@ end
 end
 
 
-@generic_kernel function first_order_euler_remap!(s::Int, dt::T,
-        ustar::V, rho::V, umat::V, vmat::V, Emat::V,
-        advection_ρ::V, advection_uρ::V, advection_vρ::V, advection_Eρ::V) where {T, V <: AbstractArray{T}}
-
+@generic_kernel function first_order_euler_remap!(
+    s::Int, dt::T,
+    ustar::V, rho::V, umat::V, vmat::V, Emat::V,
+    advection_ρ::V, advection_uρ::V, advection_vρ::V, advection_Eρ::V
+) where {T, V <: AbstractArray{T}}
     i = @index_2D_lin()
-
     is = i
     disp = dt * ustar[i]
     if disp > 0
@@ -171,12 +176,12 @@ end
 end
 
 
-@generic_kernel function second_order_euler_remap!(s::Int, dx::T, dt::T,
-        ustar::V, rho::V, umat::V, vmat::V, Emat::V,
-        advection_ρ::V, advection_uρ::V, advection_vρ::V, advection_Eρ::V) where {T, V <: AbstractArray{T}}
-
+@generic_kernel function second_order_euler_remap!(
+    s::Int, dx::T, dt::T,
+    ustar::V, rho::V, umat::V, vmat::V, Emat::V,
+    advection_ρ::V, advection_uρ::V, advection_vρ::V, advection_Eρ::V
+) where {T, V <: AbstractArray{T}}
     i = @index_2D_lin()
-
     is = i
     disp = dt * ustar[i]
     if disp > 0
@@ -207,15 +212,13 @@ end
 
 
 @generic_kernel function init_test(
-        row_length::Int, nghost::Int, nx::Int, ny::Int, 
-        domain_size::NTuple{2, T}, origin::NTuple{2, T},
-        cart_coords::NTuple{2, Int}, global_grid::NTuple{2, Int},
-        x::V, y::V, rho::V, Emat::V, umat::V, vmat::V, 
-        domain_mask::V, pmat::V, cmat::V, ustar::V, pstar::V, 
-        test_case::Test) where {T, V <: AbstractArray{T}, Test <: TwoStateTestCase}
-
-    i = @index_1D_lin()
-
+    row_length::Int, nghost::Int, nx::Int, ny::Int, 
+    domain_size::NTuple{2, T}, origin::NTuple{2, T},
+    cart_coords::NTuple{2, Int}, global_grid::NTuple{2, Int},
+    x::V, y::V, rho::V, Emat::V, umat::V, vmat::V, 
+    domain_mask::V, pmat::V, cmat::V, ustar::V, pstar::V, 
+    test_case::Test
+) where {T, V <: AbstractArray{T}, Test <: TwoStateTestCase}
     @kernel_init begin
         (cx, cy) = cart_coords
         (g_nx, g_ny) = global_grid
@@ -232,6 +235,8 @@ end
            high_u::T, low_u::T,
            high_v::T, low_v::T) = init_test_params(test_case)
     end
+
+    i = @index_1D_lin()
 
     ix = ((i-1) % row_length) - nghost
     iy = ((i-1) ÷ row_length) - nghost
@@ -290,8 +295,11 @@ end
 # Wrappers
 #
 
-function numericalFluxes!(params::ArmonParameters, data::ArmonDualData, 
-        range::DomainRange, label::Symbol; dependencies=NoneEvent())
+function numericalFluxes!(
+    params::ArmonParameters, data::ArmonDualData, 
+    range::DomainRange, label::Symbol;
+    dependencies=NoneEvent()
+)
     dt = params.cycle_dt
     d_data = device(data)
     u = params.current_axis == X_axis ? d_data.umat : d_data.vmat
@@ -311,8 +319,10 @@ function numericalFluxes!(params::ArmonParameters, data::ArmonDualData,
 end
 
 
-function numericalFluxes!(params::ArmonParameters, data::ArmonDualData, label::Symbol;
-        dependencies=NoneEvent())
+function numericalFluxes!(
+    params::ArmonParameters, data::ArmonDualData, label::Symbol;
+    dependencies=NoneEvent()
+)
     (; steps_ranges) = params
 
     if label == :inner
@@ -335,21 +345,27 @@ function numericalFluxes!(params::ArmonParameters, data::ArmonDualData, label::S
 end
 
 
-function update_EOS!(params::ArmonParameters{T}, data::ArmonData, ::TestCase, range::DomainRange;
-        dependencies) where T
+function update_EOS!(
+    params::ArmonParameters{T}, data::ArmonData, ::TestCase, range::DomainRange;
+    dependencies
+) where T
     gamma::T = 7/5
     return update_perfect_gas_EOS!(params, data, range, gamma; dependencies)
 end
 
 
-function update_EOS!(params::ArmonParameters, data::ArmonData, ::Bizarrium, range::DomainRange;
-        dependencies)
+function update_EOS!(
+    params::ArmonParameters, data::ArmonData, ::Bizarrium, range::DomainRange;
+    dependencies
+)
     return update_bizarrium_EOS!(params, data, range; dependencies)
 end
 
 
-function update_EOS!(params::ArmonParameters, data::ArmonDualData, label::Symbol;
-        dependencies=NoneEvent())
+function update_EOS!(
+    params::ArmonParameters, data::ArmonDualData, label::Symbol;
+    dependencies=NoneEvent()
+)
     (; steps_ranges) = params
 
     if label == :inner
@@ -419,8 +435,10 @@ function projection_remap!(params::ArmonParameters, data::ArmonDualData; depende
 end
 
 
-function local_time_step(params::ArmonParameters{T}, data::ArmonData{V}, prev_dt::T;
-        dependencies=NoneEvent()) where {T, V <: AbstractArray{T}}
+function local_time_step(
+    params::ArmonParameters{T}, data::ArmonData{V}, prev_dt::T;
+    dependencies=NoneEvent()
+) where {T, V <: AbstractArray{T}}
     (; cmat, umat, vmat, domain_mask, work_array_1) = data
     (; cfl, Dt, ideb, ifin, global_grid, domain_size) = params
     @indexing_vars(params)
