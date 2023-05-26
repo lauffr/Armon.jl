@@ -498,7 +498,7 @@ function make_kokkos_kernel_call(func_name, cpu_kernel_def, is_V_in_where, loop_
     if is_V_in_where
         kokkos_def[:whereparams] = map(kokkos_def[:whereparams]) do where_p
             (where_p isa Expr && @capture(where_p, V <: AbstractArray{T})) || return where_p
-            return :(V <: Kokkos.View{T})
+            return :(V <: Armon.Kokkos.View{T})
         end
     end
 
@@ -506,7 +506,7 @@ function make_kokkos_kernel_call(func_name, cpu_kernel_def, is_V_in_where, loop_
     func_name_quote = QuoteNode(func_name)
 
     kokkos_def[:body] = quote
-        ccall(Kokkos.get_symbol(params.kokkos_lib, $func_name_quote), Cvoid, CCallTypes)
+        ccall(Armon.Kokkos.get_symbol(params.kokkos_lib, $func_name_quote), Cvoid, CCallTypes)
     end
 
     body_ccall_args = kokkos_def[:body].args[2].args

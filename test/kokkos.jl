@@ -4,6 +4,7 @@ if !Kokkos.is_initialized()
     Kokkos.set_omp_vars()
     Kokkos.initialize()
 end
+Kokkos.require(; dims=[1], types=[Float64], exec_spaces=[Kokkos.OpenMP])
 
 
 function run_armon_cpp_reference(ref_params::ArmonParameters)

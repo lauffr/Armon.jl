@@ -498,7 +498,10 @@ end
 
 function get_host_array(params::ArmonParameters)
     if params.device isa Kokkos.ExecutionSpace
-        return Kokkos.View{T, D, Kokkos.DEFAULT_HOST_MEM_SPACE} where {T, D}
+        return Kokkos.View{T, D,
+            Kokkos.array_layout(Kokkos.DEFAULT_HOST_SPACE),
+            Kokkos.DEFAULT_HOST_MEM_SPACE
+        } where {T, D}
     else
         return Array
     end
@@ -511,7 +514,10 @@ function get_device_array(params::ArmonParameters)
     elseif params.device isa ROCDevice
         return ROCArray
     elseif params.device isa Kokkos.ExecutionSpace
-        return Kokkos.View{T, D, Kokkos.DEFAULT_DEVICE_MEM_SPACE} where {T, D}
+        return Kokkos.View{T, D,
+            Kokkos.array_layout(params.device),
+            Kokkos.memory_space(params.device)
+        } where {T, D}
     else  # params.device isa CPU
         return Array
     end

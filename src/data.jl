@@ -222,8 +222,8 @@ function copy_to_send_buffer!(data::ArmonDualData{D, H}, array::D, buffer::H;
         dependencies=NoneEvent()) where {D, H}
     if device_type(data) isa Kokkos.ExecutionSpace
         # Kokkos backend
-        error("Kokkos subview NYI")
-        return copyto!(buffer, array_data)
+        array_data = Kokkos.subview(array, 1:length(buffer))
+        return Kokkos.deep_copy(device_type(data), buffer, array_data)  # async deep copy
     else
         array_data = view(array, 1:length(buffer))
         wait(dependencies)  # We cannot wait for CPU events on the GPU
@@ -243,8 +243,8 @@ function copy_from_recv_buffer!(data::ArmonDualData{D, H}, array::D, buffer::H;
         dependencies=NoneEvent()) where {D, H}
     if device_type(data) isa Kokkos.ExecutionSpace
         # Kokkos backend
-        error("Kokkos subview NYI")
-        return copyto!(buffer, array_data)
+        array_data = Kokkos.subview(array, 1:length(buffer))
+        return Kokkos.deep_copy(device_type(data), array_data, buffer)  # async deep copy
     else
         array_data = view(array, 1:length(buffer))
         wait(dependencies)  # We cannot wait for CPU events on the GPU
