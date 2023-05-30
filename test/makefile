@@ -5,11 +5,13 @@ TEST_DIR = $(PROJECT_DIR)/test
 PERF_REF_DIR = $(TEST_DIR)/performance_data
 DATA_REF_DIR = $(TEST_DIR)/reference_data
 
+JULIA_THREADS ?= auto
 JULIA ?= julia
-JULIA_ARGS ?= -O3 --check-bounds=no --project=$(PROJECT_DIR) -t auto
+JULIA_ARGS ?= -O3 --check-bounds=no --project=$(PROJECT_DIR) -t $(JULIA_THREADS)
 
-MPI_EXEC ?= mpiexecjl
-MPI_EXEC_ARGS ?= --project=$(PROJECT_DIR) -n 25
+MPI_PROCS ?= 25
+MPI_EXEC ?= mpiexec
+MPI_EXEC_ARGS ?= -n $(MPI_PROCS)
 MPI_JL_ARGS ?= --color=yes
 
 main_test_file = $(TEST_DIR)/main.jl

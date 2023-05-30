@@ -26,11 +26,15 @@ struct ArmonData{V}
 end
 
 
-ArmonData(params::ArmonParameters{T}) where T = ArmonData(T, params.nbcell)
-ArmonData(type::Type, size::Int64) = ArmonData(Vector{type}, size)
+ArmonData(params::ArmonParameters{T}) where T = ArmonData(T, params.nbcell, params.comm_array_size)
+ArmonData(type::Type, size::Int64, comm_size::Int64) = ArmonData(Vector{type}, size, comm_size)
 
-function ArmonData(array::Type{V}, size::Int64; kwargs...) where {V <: AbstractArray}
+function ArmonData(array::Type{V}, size::Int64, comm_size::Int64; kwargs...) where {V <: AbstractArray}
     a1 = array(undef, size; alloc_array_kwargs(; label="x", kwargs...)...)
+
+    # For very small domains (~20×20), the communication array might be bigger than a normal data array
+    comm_size = max(size, comm_size)
+
     complete_array_type = typeof(a1)
     return ArmonData{complete_array_type}(
         a1,
@@ -44,7 +48,7 @@ function ArmonData(array::Type{V}, size::Int64; kwargs...) where {V <: AbstractA
         array(undef, size; alloc_array_kwargs(; label="gmat", kwargs...)...),
         array(undef, size; alloc_array_kwargs(; label="ustar", kwargs...)...),
         array(undef, size; alloc_array_kwargs(; label="pstar", kwargs...)...),
-        array(undef, size; alloc_array_kwargs(; label="work_array_1", kwargs...)...),
+        array(undef, comm_size; alloc_array_kwargs(; label="work_array_1", kwargs...)...),
         array(undef, size; alloc_array_kwargs(; label="work_array_2", kwargs...)...),
         array(undef, size; alloc_array_kwargs(; label="work_array_3", kwargs...)...),
         array(undef, size; alloc_array_kwargs(; label="work_array_4", kwargs...)...),
@@ -101,15 +105,15 @@ function ArmonDualData(params::ArmonParameters{T}) where T
     device_array = get_device_array(params){T, 1}
     host_array = get_host_array(params){T, 1}
 
-    device_data = ArmonData(device_array, params.nbcell; alloc_device_kwargs(params)...)
+    device_data = ArmonData(device_array, params.nbcell, params.comm_array_size; alloc_device_kwargs(params)...)
     if host_array == device_array
         host_data = device_data
     else
-        host_data = ArmonData(host_array, params.nbcell; alloc_host_kwargs(params)...)
+        host_data = ArmonData(host_array, params.nbcell, params.comm_array_size; alloc_host_kwargs(params)...)
     end
 
     # In case we don't use MPI: since there is no neighbours no array is allocated
-    comm_buffers = Dict{Side, NamedTuple{(:send, :recv), NTuple{2, MPI.Buffer{host_array}}}}()
+    comm_buffers = Dict{Side, NamedTuple{(:send, :recv), NTuple{2, MPI.Buffer{array_type(host_data)}}}}()
     requests = Dict{Side, NamedTuple{(:send, :recv), NTuple{2, MPI.AbstractRequest}}}()
     for side in instances(Side)
         has_neighbour(params, side) || continue
@@ -168,7 +172,11 @@ function get_send_comm_array(data::ArmonDualData{D, H}, side::Side) where {D, H}
     else
         comm_array = device(data).work_array_4
     end
-    return view(comm_array, Base.OneTo(length(send_buffer(data, side).data)))
+    if device_type(data) isa Kokkos.ExecutionSpace
+        return Kokkos.subview(comm_array, Base.OneTo(length(send_buffer(data, side).data)))
+    else
+        return view(comm_array, Base.OneTo(length(send_buffer(data, side).data)))
+    end
 end
 
 get_recv_comm_array(data::ArmonDualData{D, H}, side::Side) where {D, H} = get_send_comm_array(data, side)
@@ -223,7 +231,7 @@ function copy_to_send_buffer!(data::ArmonDualData{D, H}, array::D, buffer::H;
     if device_type(data) isa Kokkos.ExecutionSpace
         # Kokkos backend
         array_data = Kokkos.subview(array, 1:length(buffer))
-        return Kokkos.deep_copy(device_type(data), buffer, array_data)  # async deep copy
+        return Kokkos.deep_copy(buffer, array_data)  # synchronous deep copy
     else
         array_data = view(array, 1:length(buffer))
         wait(dependencies)  # We cannot wait for CPU events on the GPU
@@ -244,7 +252,7 @@ function copy_from_recv_buffer!(data::ArmonDualData{D, H}, array::D, buffer::H;
     if device_type(data) isa Kokkos.ExecutionSpace
         # Kokkos backend
         array_data = Kokkos.subview(array, 1:length(buffer))
-        return Kokkos.deep_copy(device_type(data), array_data, buffer)  # async deep copy
+        return Kokkos.deep_copy(array_data, buffer)  # synchronous deep copy
     else
         array_data = view(array, 1:length(buffer))
         wait(dependencies)  # We cannot wait for CPU events on the GPU

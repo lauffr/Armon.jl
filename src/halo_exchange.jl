@@ -1,7 +1,8 @@
 
-@generic_kernel function boundaryConditions!(stencil_width::Int, stride::Int, i_start::Int, d::Int,
-        u_factor::T, v_factor::T, rho::V, umat::V, vmat::V, pmat::V, cmat::V, gmat::V, Emat::V) where {T, V <: AbstractArray{T}}
-
+@generic_kernel function boundaryConditions!(
+    stencil_width::Int, stride::Int, i_start::Int, d::Int, u_factor::T, v_factor::T,
+    rho::V, umat::V, vmat::V, pmat::V, cmat::V, gmat::V, Emat::V
+) where {T, V <: AbstractArray{T}}
     idx = @index_1D_lin()
     i  = idx * stride + i_start
     i₊ = i + d
@@ -21,9 +22,10 @@
 end
 
 
-@generic_kernel function read_border_array!(side_length::Int, nghost::Int,
-        rho::V, umat::V, vmat::V, pmat::V, cmat::V, gmat::V, Emat::V, value_array::V) where V
-
+@generic_kernel function read_border_array!(
+    side_length::Int, nghost::Int,
+    rho::V, umat::V, vmat::V, pmat::V, cmat::V, gmat::V, Emat::V, value_array::V
+) where V
     idx = @index_2D_lin()
     itr = @iter_idx()
 
@@ -40,9 +42,10 @@ end
 end
 
 
-@generic_kernel function write_border_array!(side_length::Int, nghost::Int,
-        rho::V, umat::V, vmat::V, pmat::V, cmat::V, gmat::V, Emat::V, value_array::V) where V
-
+@generic_kernel function write_border_array!(
+    side_length::Int, nghost::Int,
+    rho::V, umat::V, vmat::V, pmat::V, cmat::V, gmat::V, Emat::V, value_array::V
+) where V
     idx = @index_2D_lin()
     itr = @iter_idx()
 

@@ -12,6 +12,33 @@ MPI.Init()
 MPI.Barrier(MPI.COMM_WORLD)
 
 
+TEST_KOKKOS_MPI = parse(Bool, get(ENV, "TEST_KOKKOS_MPI", "false"))
+if TEST_KOKKOS_MPI
+    using Kokkos
+
+    if is_root && !Kokkos.is_initialized()
+        invalid_config = !Kokkos.require(;
+            dims=[1], types=[Float64], exec_spaces=[Kokkos.OpenMP],
+            no_error=true
+        )
+        if invalid_config
+            @warn "Invalid Kokkos configuration"
+            Kokkos.configinfo()
+            MPI.Abort(MPI.COMM_WORLD, 1)
+        end
+        Kokkos.load_wrapper_lib()
+    end
+
+    MPI.Barrier(MPI.COMM_WORLD)
+
+    if !Kokkos.is_initialized()
+        !is_root && Kokkos.load_wrapper_lib(; no_compilation=true, no_git=true)
+        Kokkos.set_omp_vars()
+        Kokkos.initialize()
+    end
+end
+
+
 function read_sub_domain_from_global_domain_file!(params::ArmonParameters, data::ArmonData, file::IO)
     (g_nx, g_ny) = params.global_grid
     (cx, cy) = params.cart_coords
@@ -397,11 +424,43 @@ total_proc_count = MPI.Comm_size(MPI.COMM_WORLD)
         end
 
         @testset "CUDA GPU" begin
-            no_cuda = !CUDA.has_cuda_gpu()
+            # no_cuda = !CUDA.has_cuda_gpu()
+            # TODO: CUDA GPU MPI tests
         end
 
         @testset "ROCm GPU" begin
-            no_rocm = !AMDGPU.has_rocm_gpu()
+            # no_rocm = !AMDGPU.has_rocm_gpu()
+            # TODO: CUDA GPU MPI tests
+        end
+
+        TEST_KOKKOS_MPI && @testset "Kokkos" begin
+            @testset "$test with $type (async: $async_comms)" for type in (Float64,),
+                                                                  test in (:Sod, :Sod_y, :Sod_circ, :Sedov, :Bizarrium),
+                                                                  async_comms in (false, true)
+                @MPI_test comm begin
+                    ref_params = ref_params_for_sub_domain(test, type, px, py;
+                        nx=NX, ny=NY, global_comm=comm,
+                        use_kokkos=true, async_comms
+                    )
+                    dt, cycles, data = run_armon_reference(ref_params)
+                    ref_dt, ref_cycles, ref_data = ref_data_for_sub_domain(ref_params)
+
+                    @root_test dt ≈ ref_dt atol=abs_tol(type) rtol=rel_tol(type)
+                    @root_test cycles == ref_cycles
+
+                    diff_count = count_differences(ref_params, host(data), ref_data)
+                    if WRITE_FAILED
+                        global_diff_count = MPI.Allreduce(diff_count, MPI.SUM, comm)
+                        if global_diff_count > 0
+                            write_sub_domain_file(ref_params, data, "test_$(test)_$(type)_$(px)x$(py)"; no_msg=true)
+                            write_sub_domain_file(ref_params, ref_data, "ref_$(test)_$(type)_$(px)x$(py)"; no_msg=true)
+                        end
+                        println("[$(MPI.Comm_rank(comm))]: found $diff_count")
+                    end
+
+                    diff_count == 0
+                end skip=!enough_processes || !proc_in_grid
+            end
         end
 
         # TODO: thread pinning tests (no overlaps, no gaps)

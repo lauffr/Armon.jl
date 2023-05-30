@@ -37,7 +37,9 @@ if isinteractive()
      - performance    Checks for any regression in performance
      - async          Checks that separating the domain and treating the boundary conditions asynchronously 
                       doesn't introduce any variations in the result.
-     - MPI            Equivalence with the single domain case and asynchronous communications
+     - MPI            Equivalence with the single domain case and asynchronous communications.
+                      If 'TEST_KOKKOS_MPI=true' or 'kokkos' is in the test list, MPI tests with
+                      Kokkos will also be performed.
 
     Separate multiple test sets with a comma.
 
@@ -64,6 +66,8 @@ end
 deleteat!(main_options, findall(opt -> opt == :all || opt == :short, main_options))
 append!(main_options, expanded_options)
 union!(main_options)
+
+ENV["TEST_KOKKOS_MPI"] = parse(Bool, get(ENV, "TEST_KOKKOS_MPI", "false")) || (:kokkos in main_options)
 
 
 function do_tests(tests_to_do)

@@ -2,4 +2,5 @@
 /docs/build/
 /docs/Manifest.toml
 .idea
+/lib/armon_cpp/cmake-*
 /.kokkos-build

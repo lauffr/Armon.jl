@@ -86,6 +86,7 @@ mutable struct ArmonParameters{Flt_T}
     compare::Bool
     is_ref::Bool
     comparison_tolerance::Float64
+    debug_indexes::Bool
 
     # Misc.
     kokkos_project::Union{Nothing, CMakeKokkosProject}
@@ -112,7 +113,7 @@ function ArmonParameters(;
         use_kokkos = false, cmake_options = [], kokkos_options = nothing,
         use_MPI = true, px = 1, py = 1, reorder_grid = true, global_comm = nothing,
         async_comms = false,
-        compare = false, is_ref = false, comparison_tolerance = 1e-10,
+        compare = false, is_ref = false, comparison_tolerance = 1e-10, debug_indexes = false,
         return_data = false
     )
 
@@ -338,7 +339,7 @@ function ArmonParameters(;
         reorder_grid, comm_array_size,
         async_comms,
 
-        compare, is_ref, comparison_tolerance,
+        compare, is_ref, comparison_tolerance, debug_indexes,
 
         armon_cpp, kokkos_lib,
     )

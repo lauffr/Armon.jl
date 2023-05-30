@@ -23,6 +23,9 @@ julia = "1.7"
 
 [extras]
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+Kokkos = "3296cea9-b0de-4b57-aba0-ce554b517c3b"
+AMDGPU = "21141c5a-9bdb-4563-92ae-f87d6854732e"
+CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
 
 [targets]
-test = ["Test"]
+test = ["Test", "Kokkos", "CUDA", "AMDGPU"]

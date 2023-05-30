@@ -217,7 +217,7 @@ end
     cart_coords::NTuple{2, Int}, global_grid::NTuple{2, Int},
     x::V, y::V, rho::V, Emat::V, umat::V, vmat::V, 
     domain_mask::V, pmat::V, cmat::V, ustar::V, pstar::V, 
-    test_case::Test
+    test_case::Test, debug_indexes::Bool
 ) where {T, V <: AbstractArray{T}, Test <: TwoStateTestCase}
     @kernel_init begin
         (cx, cy) = cart_coords
@@ -251,7 +251,12 @@ end
     x_mid = x[i] + sx / (2*g_nx)
     y_mid = y[i] + sy / (2*g_ny)
 
-    if test_region_high(x_mid, y_mid, test_case)
+    if debug_indexes
+        rho[i]  = i
+        Emat[i] = i
+        umat[i] = i
+        vmat[i] = i
+    elseif test_region_high(x_mid, y_mid, test_case)
         rho[i]  = high_ρ
         Emat[i] = high_E
         umat[i] = high_u
