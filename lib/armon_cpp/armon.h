@@ -17,6 +17,10 @@ using flt_t = double;
 using view = Kokkos::View<flt_t*>;
 
 
+template<typename T, size_t N>
+using ntuple = std::array<T, N>;  // Do not use std::tuple, since it has a non-standard layout
+
+
 enum Axis {
     X, Y
 };
@@ -46,6 +50,9 @@ struct ArmonParams {
     static ptrdiff_t offset_row_length;
     static ptrdiff_t offset_s;
     static ptrdiff_t offset_stencil_width;
+    static ptrdiff_t offset_cart_coords;
+    static ptrdiff_t offset_global_grid;
+    static ptrdiff_t offset_debug_indexes;
 
     void* jl_value;
 
@@ -55,12 +62,17 @@ struct ArmonParams {
     [[nodiscard]] int64_t nx()                const { return *reinterpret_cast<int64_t*>(ptr() + offset_nx);     }
     [[nodiscard]] int64_t ny()                const { return *reinterpret_cast<int64_t*>(ptr() + offset_ny);     }
     [[nodiscard]] flt_t   dx()                const { return *reinterpret_cast<flt_t*  >(ptr() + offset_dx);     }
-    [[nodiscard]] std::tuple<flt_t, flt_t> domain_size() const { return *reinterpret_cast<std::tuple<flt_t, flt_t>*>(ptr() + offset_domain_size); }
-    [[nodiscard]] std::tuple<flt_t, flt_t> origin()      const { return *reinterpret_cast<std::tuple<flt_t, flt_t>*>(ptr() + offset_origin); }
+    [[nodiscard]] ntuple<flt_t, 2> domain_size() const { return *reinterpret_cast<ntuple<flt_t, 2>*>(ptr() + offset_domain_size); }
+    [[nodiscard]] ntuple<flt_t, 2> origin()      const { return *reinterpret_cast<ntuple<flt_t, 2>*>(ptr() + offset_origin); }
 
     [[nodiscard]] int64_t row_length()    const { return *reinterpret_cast<int64_t*>(ptr() + offset_row_length);    }
     [[nodiscard]] Axis    s()             const { return *reinterpret_cast<Axis*   >(ptr() + offset_s);             }
     [[nodiscard]] int64_t stencil_width() const { return *reinterpret_cast<int64_t*>(ptr() + offset_stencil_width); }
+
+    [[nodiscard]] ntuple<int64_t, 2> cart_coords() const { return *reinterpret_cast<ntuple<int64_t, 2>*>(ptr() + offset_cart_coords); }
+    [[nodiscard]] ntuple<int64_t, 2> global_grid() const { return *reinterpret_cast<ntuple<int64_t, 2>*>(ptr() + offset_global_grid); }
+
+    [[nodiscard]] bool    debug_indexes() const { return *reinterpret_cast<bool*>(ptr() + offset_debug_indexes); }
 };
 
 

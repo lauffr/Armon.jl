@@ -11,20 +11,26 @@ ptrdiff_t ArmonParams::offset_origin = 0;
 ptrdiff_t ArmonParams::offset_row_length = 0;
 ptrdiff_t ArmonParams::offset_s = 0;
 ptrdiff_t ArmonParams::offset_stencil_width = 0;
+ptrdiff_t ArmonParams::offset_cart_coords = 0;
+ptrdiff_t ArmonParams::offset_global_grid = 0;
+ptrdiff_t ArmonParams::offset_debug_indexes = 0;
 
 
 ARMON_EXPORT bool init_params_offsets(const char** names, const int64_t* offsets, int field_count)
 {
     std::unordered_map<std::string_view, ptrdiff_t*> fields_map{
-            { "nghost",            &ArmonParams::offset_nghost            },
-            { "nx",                &ArmonParams::offset_nx                },
-            { "ny",                &ArmonParams::offset_ny                },
-            { "dx",                &ArmonParams::offset_dx                },
-            { "domain_size",       &ArmonParams::offset_domain_size       },
-            { "origin",            &ArmonParams::offset_origin            },
-            { "row_length",        &ArmonParams::offset_row_length        },
-            { "s",                 &ArmonParams::offset_s                 },
-            { "stencil_width",     &ArmonParams::offset_stencil_width     },
+            { "nghost",        &ArmonParams::offset_nghost        },
+            { "nx",            &ArmonParams::offset_nx            },
+            { "ny",            &ArmonParams::offset_ny            },
+            { "dx",            &ArmonParams::offset_dx            },
+            { "domain_size",   &ArmonParams::offset_domain_size   },
+            { "origin",        &ArmonParams::offset_origin        },
+            { "row_length",    &ArmonParams::offset_row_length    },
+            { "s",             &ArmonParams::offset_s             },
+            { "stencil_width", &ArmonParams::offset_stencil_width },
+            { "cart_coords",   &ArmonParams::offset_cart_coords   },
+            { "global_grid",   &ArmonParams::offset_global_grid   },
+            { "debug_indexes", &ArmonParams::offset_debug_indexes },
     };
 
     for (int i = 0; i < field_count && !fields_map.empty(); i++) {

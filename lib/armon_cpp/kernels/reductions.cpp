@@ -16,9 +16,12 @@ ARMON_EXPORT flt_t dt_CFL(
 
     APPLY_4(CHECK_VIEW_LABEL, umat, vmat, cmat, domain_mask);
 
+    auto [g_nx, g_ny] = p.global_grid();
+    auto [sx, sy] = p.domain_size();
+
     flt_t dt = INFINITY;
-    flt_t dx = std::get<0>(p.domain_size()) / flt_t(p.nx());
-    flt_t dy = std::get<1>(p.domain_size()) / flt_t(p.ny());
+    flt_t dx = sx / flt_t(g_nx);
+    flt_t dy = sy / flt_t(g_ny);
 
     Kokkos::parallel_reduce(range_type,
     KOKKOS_LAMBDA(const UIdx lin_i, flt_t& dt_loop) {

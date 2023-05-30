@@ -27,6 +27,8 @@ add_library(armon_cpp SHARED
 
 target_link_libraries(armon_cpp PRIVATE Kokkos::kokkos)
 target_include_directories(armon_cpp PUBLIC ${CMAKE_SOURCE_DIR})
+target_compile_options(armon_cpp PRIVATE
+        $<$<CONFIG:Debug>:-Wall -Wextra -Wpedantic>)
 
 if (USE_SINGLE_PRECISION)
     target_compile_definitions(armon_cpp PRIVATE USE_SINGLE_PRECISION)

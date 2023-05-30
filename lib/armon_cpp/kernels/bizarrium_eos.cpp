@@ -3,13 +3,13 @@
 
 
 ARMON_EXPORT void update_bizarrium_EOS(
-        void* p_ptr,
+        [[maybe_unused]] void* p_ptr,
         int64_t main_range_start, int64_t main_range_step, int64_t main_range_end,
         int64_t row_range_start, int64_t row_range_step, int64_t row_range_end,
         const view& rho, const view& umat, const view& vmat, const view& Emat,
         view& pmat, view& cmat, view& gmat)
 {
-    ArmonParams p{p_ptr};
+    // ArmonParams p{p_ptr};
     RangeType range_type{};
     RangeInfo range_info{};
     std::tie(range_type, range_info) = iter(
