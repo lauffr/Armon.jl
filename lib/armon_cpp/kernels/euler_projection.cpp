@@ -83,8 +83,8 @@ KOKKOS_INLINE_FUNCTION flt_t slope_minmod(flt_t u_im, flt_t u_i, flt_t u_ip, flt
 {
     flt_t D_u_p = r_p * (u_ip - u_i );
     flt_t D_u_m = r_m * (u_i  - u_im);
-    flt_t s = std::copysign(flt_t(1), D_u_p);
-    return s * std::max(flt_t(0), std::min(s * D_u_p, s * D_u_m));
+    flt_t s = Kokkos::copysign(flt_t(1), D_u_p);
+    return s * Kokkos::max(flt_t(0), Kokkos::min(s * D_u_p, s * D_u_m));
 }
 
 

@@ -651,9 +651,9 @@ function update_steps_ranges(params::ArmonParameters)
 
     # Outer ranges: sides of the real domain
     if ax == X_axis
-        steps.outer_lb_EOS = DomainRange(col_range, row_range[1:nghost])
+        steps.outer_lb_EOS = DomainRange(col_range, row_range[1:min(nx, nghost)])
     else
-        steps.outer_lb_EOS = DomainRange(col_range[1:nghost], row_range)
+        steps.outer_lb_EOS = DomainRange(col_range[1:min(ny, nghost)], row_range)
     end
 
     steps.outer_rt_EOS = shift_dir(steps.outer_lb_EOS, ax, nghost + rt_offset)

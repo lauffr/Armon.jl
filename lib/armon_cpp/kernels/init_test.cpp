@@ -56,14 +56,14 @@ KOKKOS_INLINE_FUNCTION bool test_region_high(flt_t x, flt_t y, Test_Sod_circ)
 
 
 template<>
-bool test_region_high(flt_t x, flt_t, Test_Bizarrium)
+KOKKOS_INLINE_FUNCTION bool test_region_high(flt_t x, flt_t, Test_Bizarrium)
 {
     return x <= 0.5;
 }
 
 
 template<>
-bool test_region_high(flt_t x, flt_t y, Test_Sedov s)
+KOKKOS_INLINE_FUNCTION bool test_region_high(flt_t x, flt_t y, Test_Sedov s)
 {
     return Kokkos::pow(x, flt_t(2)) + Kokkos::pow(y, flt_t(2)) <= Kokkos::pow(s.r, flt_t(2));
 }

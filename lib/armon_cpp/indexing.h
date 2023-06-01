@@ -66,7 +66,7 @@ inline std::tuple<RangeType, RangeInfo1D> iter(
  * The transformation should be a mirror of the Julia version of the replacement of the `@index_2D_lin` macro (see
  * 'transform_kernel' in 'generic_kernels.jl').
  */
-inline Idx scale_index(UIdx i, const RangeInfo& range_info)
+KOKKOS_INLINE_FUNCTION Idx scale_index(UIdx i, const RangeInfo& range_info)
 {
     Idx ix = static_cast<Idx>(i / range_info.row_range_length);
     Idx iy = static_cast<Idx>(i % range_info.row_range_length);
@@ -75,7 +75,7 @@ inline Idx scale_index(UIdx i, const RangeInfo& range_info)
 }
 
 
-inline Idx scale_index(UIdx i, const RangeInfo1D& range_info)
+KOKKOS_INLINE_FUNCTION Idx scale_index(UIdx i, const RangeInfo1D& range_info)
 {
     return static_cast<Idx>(i) + range_info.start;
 }
