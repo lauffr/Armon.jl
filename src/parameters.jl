@@ -234,13 +234,7 @@ function ArmonParameters(;
 
     # Kokkos
     if use_kokkos
-        !Kokkos.is_initialized() && error("'use_kokkos=true' but Kokkos has not yet been initialized")
-        Kokkos.require(types=[flt_type], dims=[1])
-        armon_cpp_lib_src = joinpath(@__DIR__, "..", "lib", "armon_cpp")
-        armon_cpp_lib_build = joinpath(Kokkos.KOKKOS_BUILD_DIR, "armon_cpp")
-        armon_cpp = CMakeKokkosProject(armon_cpp_lib_src, "libarmon_cpp";
-            build_dir=armon_cpp_lib_build, cmake_options, kokkos_options)
-        option!(armon_cpp, "USE_SINGLE_PRECISION", flt_type == Float32; prefix="")
+        armon_cpp = init_kokkos_project(flt_type, cmake_options, kokkos_options)
         if use_MPI
             is_root && compile(armon_cpp)
             MPI.Barrier(global_comm)
@@ -469,6 +463,18 @@ print_parameters(p::ArmonParameters) = print_parameters(stdout, p)
 
 
 Base.show(io::IO, p::ArmonParameters) = print_parameters(io::IO, p::ArmonParameters)
+
+
+function init_kokkos_project(flt_type, cmake_options, kokkos_options)
+    !Kokkos.is_initialized() && error("'use_kokkos=true' but Kokkos has not yet been initialized")
+    Kokkos.require(types=[flt_type], dims=[1])
+    armon_cpp_lib_src = joinpath(@__DIR__, "..", "lib", "armon_cpp")
+    armon_cpp_lib_build = joinpath(Kokkos.KOKKOS_BUILD_DIR, "armon_cpp")
+    armon_cpp = CMakeKokkosProject(armon_cpp_lib_src, "libarmon_cpp";
+        build_dir=armon_cpp_lib_build, cmake_options, kokkos_options)
+    option!(armon_cpp, "USE_SINGLE_PRECISION", flt_type == Float32; prefix="")
+    return armon_cpp
+end
 
 
 """
