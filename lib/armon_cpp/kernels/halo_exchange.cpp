@@ -11,7 +11,7 @@ ARMON_EXPORT void read_border_array(
         const view& rho, const view& umat, const view& vmat, const view& pmat,
         const view& cmat, const view& gmat, const view& Emat,
         view& value_array)
-{
+ARMON_TRY {
     ArmonParams p{p_ptr};
     RangeType range_type{};
     RangeInfo range_info{};
@@ -42,7 +42,7 @@ ARMON_EXPORT void read_border_array(
         value_array[i_arr+5] = gmat[idx];
         value_array[i_arr+6] = Emat[idx];
     });
-}
+} ARMON_CATCH
 
 
 ARMON_EXPORT void write_border_array(
@@ -53,7 +53,7 @@ ARMON_EXPORT void write_border_array(
         view& rho, view& umat, view& vmat, view& pmat,
         view& cmat, view& gmat, view& Emat,
         const view& value_array)
-{
+ARMON_TRY {
     ArmonParams p{p_ptr};
     RangeType range_type{};
     RangeInfo range_info{};
@@ -84,4 +84,4 @@ ARMON_EXPORT void write_border_array(
         gmat[idx] = value_array[i_arr+5];
         Emat[idx] = value_array[i_arr+6];
     });
-}
+} ARMON_CATCH

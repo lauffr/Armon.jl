@@ -8,7 +8,7 @@ ARMON_EXPORT void update_bizarrium_EOS(
         int64_t row_range_start, int64_t row_range_step, int64_t row_range_end,
         const view& rho, const view& umat, const view& vmat, const view& Emat,
         view& pmat, view& cmat, view& gmat)
-{
+ARMON_TRY {
     // ArmonParams p{p_ptr};
     RangeType range_type{};
     RangeInfo range_info{};
@@ -49,4 +49,4 @@ ARMON_EXPORT void update_bizarrium_EOS(
         gmat[i] = flt_t(0.5) / (Kokkos::pow(rho[i],flt_t(3)) * Kokkos::pow(cmat[i],flt_t(2)))
                     * (pk0second + Kokkos::pow(G0 * rho0,flt_t(2)) * (pmat[i]-pk0));
     });
-}
+} ARMON_CATCH

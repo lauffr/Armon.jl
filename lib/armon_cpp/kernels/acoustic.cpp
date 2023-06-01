@@ -21,7 +21,7 @@ ARMON_EXPORT void acoustic(
         int64_t row_range_start, int64_t row_range_step, int64_t row_range_end,
         view& ustar, view& pstar,
         const view& rho, const view& u, const view& pmat, const view& cmat)
-{
+ARMON_TRY {
     ArmonParams p{p_ptr};
     RangeType range_type{};
     RangeInfo range_info{};
@@ -44,7 +44,7 @@ ARMON_EXPORT void acoustic(
         ustar[i] = ustar_i;
         pstar[i] = pstar_i;
     });
-}
+} ARMON_CATCH
 
 
 template<Limiter L>
@@ -121,7 +121,7 @@ ARMON_EXPORT void acoustic_GAD(
         flt_t dt,
         view& ustar, view& pstar,
         const view& rho, const view& u, const view& pmat, const view& cmat)
-{
+ARMON_TRY {
     ArmonParams p{p_ptr};
 
     APPLY_3(CHECK_VIEW_LABEL, rho, pmat, cmat);
@@ -131,4 +131,4 @@ ARMON_EXPORT void acoustic_GAD(
     case Minmod:   return acoustic_GAD<Minmod>(p, main_range_start, main_range_step, main_range_end, row_range_start, row_range_step, row_range_end, dt, ustar, pstar, rho, u, pmat, cmat);
     case Superbee: return acoustic_GAD<Superbee>(p, main_range_start, main_range_step, main_range_end, row_range_start, row_range_step, row_range_end, dt, ustar, pstar, rho, u, pmat, cmat);
     }
-}
+} ARMON_CATCH

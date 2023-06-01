@@ -56,20 +56,49 @@ ARMON_EXPORT bool init_params_offsets(const char** names, const int64_t* offsets
 int (*limiter_type_to_int)(void*);
 int (*test_case_to_int)(void*);
 void (*get_init_test_params)(void*, flt_t*, int);
+void (*raise_exception_handler)(const char* msg) __attribute__((noreturn));
 
 
 ARMON_EXPORT void init_callbacks(
         int (*limiter_type_to_int_fptr)(void*),
         int (*test_case_to_int_fptr)(void*),
-        void (*get_init_test_params_fptr)(void*, flt_t*, int))
+        void (*get_init_test_params_fptr)(void*, flt_t*, int),
+        void (*raise_exception_handler_fptr)(const char* msg) __attribute__((noreturn)))
 {
     limiter_type_to_int = limiter_type_to_int_fptr;
     test_case_to_int = test_case_to_int_fptr;
     get_init_test_params = get_init_test_params_fptr;
+    raise_exception_handler = raise_exception_handler_fptr;
 }
 
 
 ARMON_EXPORT int data_type_size()
 {
     return sizeof(flt_t);
+}
+
+
+#if defined(__GNUC__)
+#include <cxxabi.h>
+
+const char* current_exception_typename(const std::exception&)
+{
+    int status;
+    return abi::__cxa_demangle(abi::__cxa_current_exception_type()->name(), nullptr, nullptr, &status);
+}
+#else
+#include <typeinfo>
+
+const char* current_exception_typename(const std::exception& exception)
+{
+    return typeid(exception).name();
+}
+#endif
+
+
+__attribute__((noreturn)) void raise_exception(const std::exception& exception)
+{
+    const char* exception_type = current_exception_typename(exception);
+    auto str = "(" + std::string(exception_type) + ") " + exception.what();
+    raise_exception_handler(str.c_str());
 }

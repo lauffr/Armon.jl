@@ -46,4 +46,15 @@
 #endif
 
 
+#ifdef TRY_ALL_CALLS
+#define ARMON_TRY try
+#define ARMON_CATCH                     \
+    catch (const std::exception& err) { \
+        raise_exception(err);           \
+    }
+#else
+#define ARMON_TRY
+#define ARMON_CATCH
+#endif // TRY_ALL_CALLS
+
 #endif //ARMON_CPP_UTILS_H

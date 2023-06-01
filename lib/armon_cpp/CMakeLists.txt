@@ -9,6 +9,7 @@ find_package(Kokkos REQUIRED)
 
 option(USE_SINGLE_PRECISION "Use 'float' instead of 'double'" OFF)
 option(CHECK_VIEW_ORDER "Check if all kernels are called properly" OFF)
+option(TRY_ALL_CALLS "Surround all exported functions with a try-catch block" OFF)
 
 add_library(armon_cpp SHARED
         armon.h armon.cpp
@@ -32,8 +33,12 @@ target_compile_options(armon_cpp PRIVATE
 
 if (USE_SINGLE_PRECISION)
     target_compile_definitions(armon_cpp PRIVATE USE_SINGLE_PRECISION)
-endif ()
+endif()
 
 if (CHECK_VIEW_ORDER)
     target_compile_definitions(armon_cpp PRIVATE CHECK_VIEW_ORDER)
-endif ()
+endif()
+
+if (TRY_ALL_CALLS OR (CMAKE_BUILD_TYPE STREQUAL "Debug"))
+    target_compile_definitions(armon_cpp PRIVATE TRY_ALL_CALLS)
+endif()

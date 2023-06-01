@@ -79,6 +79,8 @@ struct ArmonParams {
 #define ARMON_EXPORT extern "C"
 
 
+__attribute__((noreturn)) void raise_exception(const std::exception& exception);
+
 extern int (*limiter_type_to_int)(void*);
 extern int (*test_case_to_int)(void*);
 extern void (*get_init_test_params)(void*, flt_t*, int);

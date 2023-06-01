@@ -8,7 +8,7 @@ ARMON_EXPORT void boundaryConditions(
         int64_t stride, int64_t i_start, int64_t disp,
         flt_t u_factor, flt_t v_factor,
         view& rho, view& umat, view& vmat, view& pmat, view& cmat, view& gmat, view& Emat)
-{
+ARMON_TRY {
     ArmonParams p{p_ptr};
     RangeType range_type{};
     RangeInfo1D range_info{};
@@ -41,4 +41,4 @@ ARMON_EXPORT void boundaryConditions(
             ip += disp;
         }
     });
-}
+} ARMON_CATCH

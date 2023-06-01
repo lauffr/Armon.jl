@@ -9,7 +9,7 @@ ARMON_EXPORT void cell_update(
         flt_t dt,
         const view& ustar, const view& pstar,
         view& rho, view& u, view& Emat)
-{
+ARMON_TRY {
     ArmonParams p{p_ptr};
     RangeType range_type{};
     RangeInfo range_info{};
@@ -31,4 +31,4 @@ ARMON_EXPORT void cell_update(
         u[i]    += dt / dm * (pstar[i]            - pstar[i+s]             );
         Emat[i] += dt / dm * (pstar[i] * ustar[i] - pstar[i+s] * ustar[i+s]);
     });
-}
+} ARMON_CATCH

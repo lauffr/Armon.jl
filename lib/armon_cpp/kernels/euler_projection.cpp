@@ -10,7 +10,7 @@ ARMON_EXPORT void euler_projection(
         const view& ustar,
         view& rho, view& umat, view& vmat, view& Emat,
         view& advection_rho, view& advection_urho, view& advection_vrho, view& advection_Erho)
-{
+ARMON_TRY {
     ArmonParams p{p_ptr};
     RangeType range_type{};
     RangeInfo range_info{};
@@ -40,7 +40,7 @@ ARMON_EXPORT void euler_projection(
         vmat[i] = tmp_vrho / tmp_rho;
         Emat[i] = tmp_Erho / tmp_rho;
     });
-}
+} ARMON_CATCH
 
 
 ARMON_EXPORT void first_order_euler_remap(
@@ -50,7 +50,7 @@ ARMON_EXPORT void first_order_euler_remap(
         flt_t dt,
         const view& ustar, const view& rho, const view& umat, const view& vmat, const view& Emat,
         view& advection_rho, view& advection_urho, view& advection_vrho, view& advection_Erho)
-{
+ARMON_TRY {
     ArmonParams p{p_ptr};
     RangeType range_type{};
     RangeInfo range_info{};
@@ -76,7 +76,7 @@ ARMON_EXPORT void first_order_euler_remap(
         advection_vrho[is] = disp * (rho[i] * vmat[i]);
         advection_Erho[is] = disp * (rho[i] * Emat[i]);
     });
-}
+} ARMON_CATCH
 
 
 KOKKOS_INLINE_FUNCTION flt_t slope_minmod(flt_t u_im, flt_t u_i, flt_t u_ip, flt_t r_m, flt_t r_p)
@@ -95,7 +95,7 @@ ARMON_EXPORT void second_order_euler_remap(
         flt_t dt,
         const view& ustar, const view& rho, const view& umat, const view& vmat, const view& Emat,
         view& advection_rho, view& advection_urho, view& advection_vrho, view& advection_Erho)
-{
+ARMON_TRY {
     ArmonParams p{p_ptr};
     RangeType range_type{};
     RangeInfo range_info{};
@@ -141,4 +141,4 @@ ARMON_EXPORT void second_order_euler_remap(
         advection_vrho[is] = disp * (rho[i] * vmat[i] - slope_vr * length_factor);
         advection_Erho[is] = disp * (rho[i] * Emat[i] - slope_Er * length_factor);
     });
-}
+} ARMON_CATCH

@@ -9,7 +9,7 @@ ARMON_EXPORT void update_perfect_gas_EOS(
         flt_t gamma,
         const view& rho, const view& Emat, const view& umat, const view& vmat,
         view& pmat, view& cmat, view& gmat)
-{
+ARMON_TRY {
     // ArmonParams p{p_ptr};
     RangeType range_type{};
     RangeInfo range_info{};
@@ -29,4 +29,4 @@ ARMON_EXPORT void update_perfect_gas_EOS(
         cmat[i] = Kokkos::sqrt(gamma * pmat[i] / rho[i]);
         gmat[i] = (1 + gamma) / 2;
     });
-}
+} ARMON_CATCH

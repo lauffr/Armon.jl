@@ -148,7 +148,7 @@ ARMON_EXPORT void init_test(
         int64_t loop_range_start, int64_t loop_range_step, int64_t loop_range_end,
         view& x, view& y, view& rho, view& Emat, view& umat, view& vmat,
         view& domain_mask, view& pmat, view& cmat, view& ustar, view& pstar)
-{
+ARMON_TRY {
     ArmonParams p{p_ptr};
 
     APPLY_6(CHECK_VIEW_LABEL, x, y, rho, Emat, umat, vmat);
@@ -184,4 +184,4 @@ ARMON_EXPORT void init_test(
             test_params, test, debug_indexes
         );
     }, test_case);
-}
+} ARMON_CATCH

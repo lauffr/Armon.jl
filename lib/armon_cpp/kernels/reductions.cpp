@@ -6,7 +6,7 @@ ARMON_EXPORT flt_t dt_CFL(
         void* p_ptr,
         int64_t loop_range_start, int64_t loop_range_step, int64_t loop_range_end,
         const view& umat, const view& vmat, const view& cmat, const view& domain_mask)
-{
+ARMON_TRY {
     ArmonParams p{p_ptr};
     RangeType range_type{};
     RangeInfo1D range_info{};
@@ -32,7 +32,7 @@ ARMON_EXPORT flt_t dt_CFL(
     }, Kokkos::Min<flt_t>(dt));
 
     return dt;
-}
+} ARMON_CATCH
 
 
 ARMON_EXPORT void conservation_vars(
@@ -40,7 +40,7 @@ ARMON_EXPORT void conservation_vars(
         int64_t loop_range_start, int64_t loop_range_step, int64_t loop_range_end,
         const view& rho, const view& Emat, const view& domain_mask,
         flt_t* total_mass_p, flt_t* total_energy_p)
-{
+ARMON_TRY {
     ArmonParams p{p_ptr};
     RangeType range_type{};
     RangeInfo1D range_info{};
@@ -65,4 +65,4 @@ ARMON_EXPORT void conservation_vars(
 
     *total_mass_p = total_mass;
     *total_energy_p = total_energy;
-}
+} ARMON_CATCH

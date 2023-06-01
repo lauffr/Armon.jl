@@ -39,6 +39,9 @@ function get_init_test_params(params::ArmonParameters, test_params_ptr::Ptr{Noth
 end
 
 
+raise_cpp_exception(str::Cstring) = error("C++ exception: " * Base.unsafe_string(str))
+
+
 function init_armon_cpp(params::ArmonParameters{T}) where T
     params_t = typeof(params)
 
@@ -58,10 +61,11 @@ function init_armon_cpp(params::ArmonParameters{T}) where T
     end
 
     ccall(Kokkos.get_symbol(params.kokkos_lib, :init_callbacks),
-        Cchar, (Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}),
+        Cchar, (Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}, Ptr{Cvoid}),
         @cfunction(limiter_type_to_int, Cint, (Ref{ArmonParameters},)),
         @cfunction(test_case_to_int, Cint, (Ref{ArmonParameters},)),
-        @cfunction(get_init_test_params, Cvoid, (Ref{ArmonParameters}, Ptr{Nothing}, Cint))
+        @cfunction(get_init_test_params, Cvoid, (Ref{ArmonParameters}, Ptr{Nothing}, Cint)),
+        @cfunction(raise_cpp_exception, Cvoid, (Cstring,))
     )
 
     armon_cpp_eltype_size = ccall(Kokkos.get_symbol(params.kokkos_lib, :data_type_size),
