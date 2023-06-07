@@ -527,14 +527,17 @@ function time_step(params::ArmonParameters, data::ArmonDualData; dependencies=No
             next_dt = local_dt
         end
 
-        if is_root && (!isfinite(next_dt) || next_dt <= 0.)
-            error("Invalid time step for cycle $(params.cycle): $next_dt")
+        if (!isfinite(next_dt) || next_dt <= 0.)
+            is_root && error("Invalid time step for cycle $(params.cycle): $next_dt")
+            return true
         end
 
         params.next_cycle_dt = next_dt
     else
         params.next_cycle_dt = params.curr_cycle_dt
     end
+
+    return false
 end
 
 

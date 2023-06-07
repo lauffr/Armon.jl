@@ -32,7 +32,7 @@ function init_time_step(params::ArmonParameters, data::ArmonDualData)
         # No imposed initial time step, we must compute the first one manually
         update_EOS!(params, data, :full)
         step_checkpoint(params, data, "update_EOS_init") && return true
-        time_step(params, data)
+        time_step(params, data) && return true
         params.curr_cycle_dt = params.next_cycle_dt
     else
         params.next_cycle_dt = Dt
@@ -45,7 +45,7 @@ end
 
 function solver_cycle(params::ArmonParameters, data::ArmonDualData; dependencies=NoneEvent())
     (; timer) = params
-    @timeit timer "time_step" time_step(params, data; dependencies)
+    (@timeit timer "time_step" time_step(params, data; dependencies)) && @goto stop
 
     for (axis, dt_factor) in split_axes(params)
         update_axis_parameters(params, axis)
