@@ -753,17 +753,17 @@ function transform_kernel(func::Expr)
         return NoneEvent()
     end
 
-    gpu_call_block = quote 
+    gpu_call_block = quote
         gpu_kernel_func = $kernel_func_name(params.device, params.block_size)  # Get the right KernelAbstraction function...
         ndrange = $gpu_ndrange
         return $gpu_call  # ...then call it
     end
 
-    call_block = quote 
-        if params.use_gpu
-            $gpu_call_block
-        elseif params.use_kokkos
+    call_block = quote
+        if params.use_kokkos
             $kokkos_call_block
+        elseif params.use_gpu
+            $gpu_call_block
         else
             $cpu_call_block
         end
