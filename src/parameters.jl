@@ -756,3 +756,12 @@ function ghost_domain(params::ArmonParameters, side::Side)
 
     return DomainRange(main_range, inner_range)
 end
+
+
+function Base.wait(params::ArmonParameters, dependencies)
+    if params.use_kokkos
+        Kokkos.fence()
+    else
+        wait(dependencies)
+    end
+end

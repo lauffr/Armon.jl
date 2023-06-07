@@ -30,7 +30,7 @@ end
 function init_time_step(params::ArmonParameters, data::ArmonDualData)
     if params.Dt == 0
         # No imposed initial time step, we must compute the first one manually
-        update_EOS!(params, data, :full) |> wait
+        update_EOS!(params, data, :full)
         step_checkpoint(params, data, "update_EOS_init") && return true
         time_step(params, data)
         params.curr_cycle_dt = params.next_cycle_dt
@@ -129,7 +129,7 @@ function time_loop(params::ArmonParameters, data::ArmonDualData)
 
         if is_root
             if silent <= 1
-                wait(dependencies)
+                wait(params, dependencies)
                 current_mass, current_energy = conservation_vars(params, data)
                 ΔM = abs(initial_mass - current_mass)     / initial_mass   * 100
                 ΔE = abs(initial_energy - current_energy) / initial_energy * 100
@@ -137,7 +137,7 @@ function time_loop(params::ArmonParameters, data::ArmonDualData)
                     params.cycle + 1, params.curr_cycle_dt, params.time, ΔM, ΔE)
             end
         elseif silent <= 1
-            wait(dependencies)
+            wait(params, dependencies)
             conservation_vars(params, data)
         end
 
@@ -145,14 +145,14 @@ function time_loop(params::ArmonParameters, data::ArmonDualData)
         params.time += params.curr_cycle_dt
 
         if animation_step != 0 && (params.cycle - 1) % animation_step == 0
-            wait(dependencies)
+            wait(params, dependencies)
             frame_index = (params.cycle - 1) ÷ animation_step
             frame_file = joinpath("anim", params.output_file) * "_" * @sprintf("%03d", frame_index)
             write_sub_domain_file(params, data, frame_file)
         end
     end
 
-    wait(dependencies)
+    wait(params, dependencies)
 
     @label stop
 
@@ -222,7 +222,7 @@ function armon(params::ArmonParameters{T}) where T
     # policy when working on CPU only
     @timeit timer "init" begin
         data = @timeit timer "alloc" ArmonDualData(params)
-        @timeit timer "init_test" wait(init_test(params, data))
+        @timeit timer "init_test" wait(params, init_test(params, data))
     end
 
     dt, cycles, cells_per_sec = time_loop(params, data)

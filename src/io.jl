@@ -247,7 +247,7 @@ end
 
 function step_checkpoint(params::ArmonParameters, data::ArmonDualData, step_label::String; dependencies=NoneEvent())
     if params.compare
-        wait(dependencies)
+        wait(params, dependencies)
 
         device_to_host!(data)
         h_data = host(data)
