@@ -18,45 +18,32 @@ function cmp_gpu_with_reference_for(type, test, device; kwargs...)
     ref_params = get_reference_params(test, type; use_gpu=true, device, kwargs...)
     dt, cycles, data = run_armon_gpu_reference(ref_params)
     ref_data = ArmonData(ref_params)
-    return compare_with_reference_data(ref_params, dt, cycles, host(data), ref_data)
+    differences_count, max_diff = compare_with_reference_data(ref_params, dt, cycles, host(data), ref_data)
+    @test differences_count == 0
+    @test max_diff == 0
 end
 
 
 @testset "GPU" begin
-    no_cuda = !CUDA.has_cuda_gpu()
-    no_rocm = !AMDGPU.has_rocm_gpu()
-
-    @testset "CUDA" begin
+    CUDA.has_cuda_gpu() && @testset "CUDA" begin
         @testset "$test with $type" for type in (Float32, Float64),
                                         test in (:Sod, :Sod_y, :Sod_circ, :Bizarrium, :Sedov)
-            @test begin
-                differences_count = cmp_gpu_with_reference_for(type, test, :CUDA)
-                differences_count == 0
-            end skip=no_cuda
+            cmp_gpu_with_reference_for(type, test, :CUDA)
         end
 
         @testset "Async $test" for test in (:Sod, :Sod_y, :Sod_circ, :Bizarrium, :Sedov)
-            @test begin
-                differences_count = cmp_gpu_with_reference_for(Float64, test, :CUDA; async_comms=true)
-                differences_count == 0
-            end skip=no_cuda
+            cmp_gpu_with_reference_for(Float64, test, :CUDA; async_comms=true)
         end
     end
 
-    @testset "ROCm" begin
+    AMDGPU.has_rocm_gpu() && @testset "ROCm" begin
         @testset "$test with $type" for type in (Float32, Float64),
                                         test in (:Sod, :Sod_y, :Sod_circ, :Bizarrium, :Sedov)
-            @test begin
-                differences_count = cmp_gpu_with_reference_for(type, test, :ROCM)
-                differences_count == 0
-            end skip=no_rocm
+            cmp_gpu_with_reference_for(type, test, :ROCM)
         end
 
         @testset "Async $test" for test in (:Sod, :Sod_y, :Sod_circ, :Bizarrium, :Sedov)
-            @test begin
-                differences_count = cmp_gpu_with_reference_for(Float64, test, :ROCM; async_comms=true)
-                differences_count == 0
-            end skip=no_rocm
+            cmp_gpu_with_reference_for(Float64, test, :ROCM; async_comms=true)
         end
     end
 end

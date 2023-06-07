@@ -18,8 +18,7 @@ if TEST_KOKKOS_MPI
 
     if is_root && !Kokkos.is_initialized()
         invalid_config = !Kokkos.require(;
-            dims=[1], types=[Float64], exec_spaces=[Kokkos.OpenMP],
-            no_error=true
+            dims=[1], types=[Float64], no_error=true
         )
         if invalid_config
             @warn "Invalid Kokkos configuration"
@@ -368,7 +367,7 @@ total_proc_count = MPI.Comm_size(MPI.COMM_WORLD)
                     @root_test dt ≈ ref_dt atol=abs_tol(type) rtol=rel_tol(type)
                     @root_test cycles == ref_cycles
 
-                    diff_count = count_differences(ref_params, host(data), ref_data)
+                    diff_count, _ = count_differences(ref_params, host(data), ref_data)
                     if WRITE_FAILED
                         global_diff_count = MPI.Allreduce(diff_count, MPI.SUM, comm)
                         if global_diff_count > 0
@@ -395,7 +394,7 @@ total_proc_count = MPI.Comm_size(MPI.COMM_WORLD)
                     @root_test dt ≈ ref_dt atol=abs_tol(type) rtol=rel_tol(type)
                     @root_test cycles == ref_cycles
 
-                    diff_count = count_differences(ref_params, host(data), ref_data)
+                    diff_count, _ = count_differences(ref_params, host(data), ref_data)
                     diff_count == 0
                 end skip=!enough_processes || !proc_in_grid
             end
@@ -448,7 +447,7 @@ total_proc_count = MPI.Comm_size(MPI.COMM_WORLD)
                     @root_test dt ≈ ref_dt atol=abs_tol(type) rtol=rel_tol(type)
                     @root_test cycles == ref_cycles
 
-                    diff_count = count_differences(ref_params, host(data), ref_data)
+                    diff_count, _ = count_differences(ref_params, host(data), ref_data)
                     if WRITE_FAILED
                         global_diff_count = MPI.Allreduce(diff_count, MPI.SUM, comm)
                         if global_diff_count > 0

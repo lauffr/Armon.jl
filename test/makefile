@@ -19,6 +19,13 @@ create_perf_ref_file = $(PERF_REF_DIR)/create_performance_reference.jl
 create_data_ref_file = $(DATA_REF_DIR)/create_references.jl
 
 
+# When target is 'test', forward other args to Julia
+ifeq (test,$(firstword $(MAKECMDGOALS)))
+  TEST_ARGS := $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
+  $(eval $(TEST_ARGS):;@:)
+endif
+
+
 .PHONY: create_perf_reference create_solver_reference short perf mpi all
 
 create_perf_reference:
@@ -27,14 +34,11 @@ create_perf_reference:
 create_solver_reference:
 	$(JULIA) $(JULIA_ARGS) $(create_data_ref_file)
 
-short:
-	$(JULIA) $(JULIA_ARGS) $(main_test_file) short
-
-perf:
-	$(JULIA) $(JULIA_ARGS) $(main_test_file) performance
-
 mpi:
 	$(MPI_EXEC) $(MPI_EXEC_ARGS) $(JULIA) $(JULIA_ARGS) $(MPI_JL_ARGS) $(main_test_file) mpi
+
+test:
+	$(JULIA) $(JULIA_ARGS) $(main_test_file) $(TEST_ARGS)
 
 all:
 	$(JULIA) $(JULIA_ARGS) $(main_test_file) all

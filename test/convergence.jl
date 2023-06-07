@@ -9,14 +9,15 @@ function cmp_cpu_with_reference(test::Symbol, type::Type; options...)
     T = data_type(ref_params)
     ref_data = ArmonData(ref_params)
 
-    differences_count = compare_with_reference_data(ref_params, dt, cycles, host(data), ref_data)
+    differences_count, max_diff = compare_with_reference_data(ref_params, dt, cycles, host(data), ref_data)
 
     if differences_count > 0 && WRITE_FAILED
         file_name = "test_$(test_name(ref_params.test))_$(T)"
         write_sub_domain_file(ref_params, data, file_name; no_msg=true)
     end
 
-    return differences_count
+    @test differences_count == 0
+    @test max_diff == 0
 end
 
 
@@ -48,32 +49,25 @@ function uninit_vars_propagation(test, type)
 
     ref_data = ArmonData(ref_params)
 
-    return compare_with_reference_data(ref_params, dt, cycles, host(data), ref_data)
+    differences_count, max_diff = compare_with_reference_data(ref_params, dt, cycles, host(data), ref_data)
+    @test differences_count == 0
+    @test max_diff == 0
 end
 
 
 @testset "Convergence" begin
     @testset "$test with $type" for type in (Float32, Float64),
                                     test in (:Sod, :Sod_y, :Sod_circ, :Bizarrium, :Sedov)
-        @test begin
-            diff = cmp_cpu_with_reference(test, type)
-            diff == 0
-        end
+        cmp_cpu_with_reference(test, type)
     end
 
     @testset "Uninitialized values propagation" begin
-        @test begin
-            diff = uninit_vars_propagation(:Sedov, Float64)
-            diff == 0
-        end
+        uninit_vars_propagation(:Sedov, Float64)
     end
 
     @testset "Async code path" begin
         @testset "$test" for test in (:Sod, :Sod_y, :Sod_circ, :Bizarrium, :Sedov)
-            @test begin
-                diff = cmp_cpu_with_reference(test, Float64; async_comms=true, use_MPI=false)
-                diff == 0
-            end
+            cmp_cpu_with_reference(test, Float64; async_comms=true, use_MPI=false)
         end
     end
 end

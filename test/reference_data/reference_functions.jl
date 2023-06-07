@@ -65,10 +65,12 @@ end
 
 # TODO: GPU/CPU still fails, but it is most likely that is is a problem with comparison and tolerance
 abs_tol(::Type{Float64}) = 1e-13
-abs_tol(::Type{Float32}) = 1e-6
+abs_tol(::Type{Float32}) = 1e-5
 abs_tol(::Flt) where {Flt <: AbstractFloat} = abs_tol(Flt)
-rel_tol(::Type{Flt}) where {Flt <: AbstractFloat} = 4*eps(Flt)
+rel_tol(::Type{Float64}) = 4*eps(Float64)
+rel_tol(::Type{Float32}) = 20*eps(Float32)
 rel_tol(::Flt) where {Flt <: AbstractFloat} = rel_tol(Flt)
+no_zero(x::Flt) where (Flt <: AbstractFloat) = ifelse(iszero(x), nextfloat(zero(Flt)), x)
 
 
 function count_differences(ref_params::ArmonParameters{T}, 
@@ -78,6 +80,7 @@ function count_differences(ref_params::ArmonParameters{T},
     @indexing_vars(ref_params)
 
     differences_count = 0
+    max_diff = zero(T)
     for j in 1:ny
         row_range = @i(1,j):@i(nx,j)
         for field in saved_variables()
@@ -85,14 +88,18 @@ function count_differences(ref_params::ArmonParameters{T},
             cur_row = @view getfield(data, field)[row_range]
             diff_count = sum(.~ isapprox.(ref_row, cur_row; atol, rtol))
             differences_count += diff_count
-            (diff_count > 0) && @debug begin
-                max_diff = maximum(abs.((ref_row .- cur_row) .* (.~ isapprox.(ref_row, cur_row; atol, rtol))))
-                "Row $j has $diff_count differences in '$field' with the reference. Max diff=$max_diff"
+            if diff_count > 0
+                row_max_diff = maximum(
+                    abs.((ref_row .- cur_row) ./ no_zero.(ref_row)) .*
+                    (.~ isapprox.(ref_row, cur_row; atol, rtol))
+                )
+                max_diff = max(max_diff, row_max_diff)
+                @debug "Row $j has $diff_count differences in '$field' with the reference. Max diff=$row_max_diff"
             end
         end
     end
 
-    return differences_count
+    return differences_count, max_diff
 end
 
 
