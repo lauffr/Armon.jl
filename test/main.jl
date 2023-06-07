@@ -1,4 +1,6 @@
 
+!isinteractive() && @info "Loading..."
+
 using Armon
 using Test
 
@@ -108,6 +110,10 @@ function do_tests(tests_to_do)
     # TODO: in Julia 1.8, there is one more option: 'showtimings' which display the time for each test
     if is_root && isinteractive()
         Test.print_test_results(ts)
+    end
+
+    if !isinteractive() && Armon.Kokkos.is_initialized()
+        Armon.Kokkos.finalize()
     end
 end
 

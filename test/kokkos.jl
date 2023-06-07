@@ -79,6 +79,7 @@ function cmp_halo_exchange_function(side; kwargs...)
     # `ref_comm_array` should be on the host too since the ref is on the host
     host_ref_comm_array = view(ref_comm_array, Base.OneTo(ref_params.comm_array_size))
 
+    # data_1 to comm_array
     @testset "Read" begin
         Armon.read_border_array!(kokkos_params, kokkos_data, kokkos_comm_array, side)
         Kokkos.fence()
@@ -89,13 +90,14 @@ function cmp_halo_exchange_function(side; kwargs...)
         @test host_kokkos_comm_array == host_ref_comm_array
     end
 
+    # comm_array to data_2
     @testset "Write" begin
         Armon.write_border_array!(kokkos_params, kokkos_data_2, kokkos_comm_array, side)
         Kokkos.fence()
 
         Armon.write_border_array!(ref_params, ref_data_2, ref_comm_array, side) |> wait
 
-        host_to_device!(kokkos_data_2)
+        device_to_host!(kokkos_data_2)
         @test host(kokkos_data_2).rho  == host(ref_data_2).rho
         @test host(kokkos_data_2).umat == host(ref_data_2).umat
         @test host(kokkos_data_2).vmat == host(ref_data_2).vmat

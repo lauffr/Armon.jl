@@ -1,7 +1,7 @@
 
 using Printf
 using Test
-import Armon: @i, @indexing_vars, ArmonData, TestCase, init_test, time_loop 
+import Armon: @i, @indexing_vars, ArmonData, TestCase, init_test, time_loop, device_to_host!
 import Armon: write_data_to_file, read_data_from_file
 
 
@@ -25,6 +25,7 @@ function run_armon_reference(ref_params::ArmonParameters{T}) where T
     data = ArmonDualData(ref_params)
     init_test(ref_params, data)
     dt, cycles, _ = time_loop(ref_params, data)
+    device_to_host!(data)
     return dt, cycles, data
 end
 
