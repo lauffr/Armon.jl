@@ -3,7 +3,7 @@ using TOML
 using ThreadPinning
 using KernelAbstractions
 import .Armon: ArmonDualData, memory_required, init_test, MinmodLimiter
-import .Armon: @indexing_vars, @i, DomainRange, update_steps_ranges, get_device_array, linear_range
+import .Armon: @indexing_vars, @i, DomainRange, update_steps_ranges, linear_range
 
 
 include(joinpath(@__DIR__, "device_info.jl"))

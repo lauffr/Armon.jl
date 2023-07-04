@@ -14,7 +14,6 @@ function get_reference_params(test::Symbol, type::Type; overriden_options...)
         :maxcycle => 1000, :maxtime => 0,  # Always run until reaching the default maximum time of the test
         :silent => 5, :write_output => false, :measure_time => false,
         :use_MPI => false, :async_comms => false
-        # TODO: disable SIMD + threading
     )
     merge!(ref_options, overriden_options)
     ArmonParameters(; ref_options...)
@@ -65,18 +64,20 @@ end
 
 
 # TODO: GPU/CPU still fails, but it is most likely that is is a problem with comparison and tolerance
-abs_tol(::Type{Float64}) = 1e-13
-abs_tol(::Type{Float32}) = 1e-5
-abs_tol(::Flt) where {Flt <: AbstractFloat} = abs_tol(Flt)
-rel_tol(::Type{Float64}) = 4*eps(Float64)
-rel_tol(::Type{Float32}) = 20*eps(Float32)
-rel_tol(::Flt) where {Flt <: AbstractFloat} = rel_tol(Flt)
+abs_tol(::Type{Float64}, ::Type{<:Armon.TestCase}) = 1e-13
+abs_tol(::Type{Float32}, ::Type{<:Armon.TestCase}) = 1e-5
+rel_tol(::Type{Float64}, ::Type{<:Armon.TestCase}) = 4*eps(Float64)
+rel_tol(::Type{Float32}, ::Type{<:Armon.TestCase}) = 20*eps(Float32)
+
+abs_tol(::Flt) where {Flt <: AbstractFloat} = abs_tol(Flt, Armon.TestCase)
+rel_tol(::Flt) where {Flt <: AbstractFloat} = rel_tol(Flt, Armon.TestCase)
+
 no_zero(x::Flt) where (Flt <: AbstractFloat) = ifelse(iszero(x), nextfloat(zero(Flt)), x)
 
 
 function count_differences(ref_params::ArmonParameters{T}, 
         data::ArmonData, ref_data::ArmonData;
-        atol=abs_tol(T), rtol=rel_tol(T)) where {T}
+        atol=abs_tol(T, typeof(ref_params.test)), rtol=rel_tol(T, typeof(ref_params.test))) where {T}
     (; nx, ny) = ref_params
     @indexing_vars(ref_params)
 
@@ -108,8 +109,8 @@ function compare_with_reference_data(ref_params::ArmonParameters{T}, dt::T, cycl
         data::ArmonData, ref_data::ArmonData) where {T}
     ref_file_name = get_reference_data_file_name(ref_params.test, T)
 
-    atol = abs_tol(T)
-    rtol = rel_tol(T)
+    atol = abs_tol(T, typeof(ref_params.test))
+    rtol = rel_tol(T, typeof(ref_params.test))
 
     open(ref_file_name, "r") do ref_file
         ref_dt, ref_cycles = read_reference_data(ref_params, ref_file, ref_data)
