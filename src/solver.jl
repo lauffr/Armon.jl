@@ -237,7 +237,7 @@ function armon(params::ArmonParameters{T}) where T
         params.measure_time ? copy(timer) : nothing
     )
 
-    params.use_gpu && device_to_host!(data)
+    device_to_host!(data)  # No-op on host
     params.write_output && write_sub_domain_file(params, data, params.output_file)
     params.write_slices && write_slices_files(params, data, params.output_file)
 

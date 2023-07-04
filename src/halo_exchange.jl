@@ -127,7 +127,7 @@ function boundaryConditions!(params::ArmonParameters{T}, data::ArmonDualData, si
         else
             # Launch the communications and wait for their completion now in order to be able to 
             # measure them. 
-            wait(dependencies)
+            wait(params, dependencies)
 
             @timeit params.timer "MPI" begin
                 send_request = data.requests[side].send
