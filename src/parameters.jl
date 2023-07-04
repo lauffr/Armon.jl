@@ -1,5 +1,5 @@
 
-mutable struct ArmonParameters{Flt_T}
+mutable struct ArmonParameters{Flt_T, Device}
     # Test problem type, riemann solver and solver scheme
     test::TestCase
     riemann::Symbol
@@ -63,7 +63,7 @@ mutable struct ArmonParameters{Flt_T}
     use_simd::Bool
     use_gpu::Bool
     use_kokkos::Bool
-    device::GenericDevice
+    device::Device
     block_size::Int
 
     # MPI
@@ -89,8 +89,8 @@ mutable struct ArmonParameters{Flt_T}
     debug_indexes::Bool
 
     # Misc.
-    kokkos_project::Union{Nothing, CMakeKokkosProject}
-    kokkos_lib::Union{Nothing, Kokkos.CLibrary}
+    kokkos_project::Any
+    kokkos_lib::Any
 end
 
 
@@ -214,36 +214,23 @@ function ArmonParameters(;
     root_rank = 0
     is_root = rank == root_rank
 
-    # GPU
-    if use_gpu
-        if device == :CUDA
-            CUDA.allowscalar(false)
-            device = CUDADevice()
-        elseif device == :ROCM
-            AMDGPU.allowscalar(false)
-            device = ROCDevice()
-        elseif device == :CPU
-            is_root && @warn "`use_gpu=true` but the device is set to the CPU. Therefore no kernel will run on a GPU." maxlog=1
-            device = CPU()  # Useful in some cases for debugging
-        else
-            error("Unknown GPU device: $device")
-        end
-    else
-        device = CPU()
-    end
-
-    # Kokkos
     if use_kokkos
-        armon_cpp = init_kokkos_project(flt_type, cmake_options, kokkos_options)
-        if use_MPI
-            is_root && compile(armon_cpp)
-            MPI.Barrier(global_comm)
-        else
-            compile(armon_cpp)
-        end
-        kokkos_lib = Kokkos.load_lib(armon_cpp)
-        device = Kokkos.DEFAULT_DEVICE_SPACE()
+        device_tag = Val(:Kokkos)
+        device = init_device(device_tag, is_root)
+        armon_cpp, kokkos_lib = init_backend(device_tag,
+            flt_type, cmake_options, kokkos_options, use_MPI, is_root, global_comm)
+    elseif use_gpu
+        # KernelAbstractions backend: :CPU, :CUDA or :ROCM
+        device_tag = Val(device)
+        device = init_device(device_tag, is_root)
+        init_backend(device_tag)
+
+        armon_cpp = nothing
+        kokkos_lib = nothing
     else
+        device_tag = Val(:CPU)
+        device = CPU_HP()
+
         armon_cpp = nothing
         kokkos_lib = nothing
     end
@@ -305,7 +292,7 @@ function ArmonParameters(;
     timer = TimerOutput()
     disable_timer!(timer)
 
-    params = ArmonParameters{flt_type}(
+    params = ArmonParameters{flt_type, typeof(device)}(
         test, riemann, scheme, riemann_limiter,
 
         nghost, nx, ny, dx, domain_size, origin,
@@ -340,7 +327,7 @@ function ArmonParameters(;
 
     update_axis_parameters(params, first(split_axes(params))[1])
     update_steps_ranges(params)
-    use_kokkos && init_armon_cpp(params)
+    post_init_device(device_tag, params)
 
     return params
 end
@@ -352,36 +339,28 @@ function print_parameter(io::IO, pad::Int, name::String, value; nl=true, suffix=
 end
 
 
+function print_device_info(io::IO, pad::Int, p::ArmonParameters{<:Any, CPU_HP})
+    print_parameter(io, pad, "multithreading", p.use_threading, nl=!p.use_threading)
+    if p.use_threading
+        println(io, " ($(Threads.nthreads()) $(use_std_lib_threads ? "standard " : "")thread",
+            Threads.nthreads() != 1 ? "s" : "", ")")
+    end
+    print_parameter(io, pad, "use_simd", p.use_simd)
+    print_parameter(io, pad, "use_gpu", false)
+    print_parameter(io, pad, "use_kokkos", false)
+end
+
+
+function print_device_info(io::IO, pad::Int, p::ArmonParameters{<:Any, CPU})
+    print_parameter(io, pad, "GPU", true, nl=false)
+    println(io, ": KA.jl's CPU backend (block size: $(p.block_size))")
+end
+
+
 function print_parameters(io::IO, p::ArmonParameters; pad = 20)
     println(io, "Armon parameters")
     print_parameter(io, pad, "ieee_bits", sizeof(data_type(p)) * 8)
-    if !p.use_gpu && !p.use_kokkos
-        print_parameter(io, pad, "multithreading", p.use_threading, nl=!p.use_threading)
-        if p.use_threading
-            println(io, " ($(Threads.nthreads()) $(use_std_lib_threads ? "standard " : "")thread",
-                Threads.nthreads() != 1 ? "s" : "", ")")
-        end
-        print_parameter(io, pad, "use_simd", p.use_simd)
-        print_parameter(io, pad, "use_gpu", false)
-        print_parameter(io, pad, "use_kokkos", false)
-    elseif p.use_kokkos
-        print_parameter(io, pad, "use_kokkos", true)
-        print_parameter(io, pad, "device", nameof(Kokkos.main_space_type(p.device)))
-        print_parameter(io, pad, "memory", nameof(Kokkos.main_space_type(Kokkos.memory_space(p.device))))
-    else
-        print_parameter(io, pad, "GPU", true, nl=false)
-        print(io, ": ")
-        if p.device isa CPU
-            print(io, "KA.jl's CPU backend")
-        elseif p.device isa CUDADevice
-            print(io, "CUDA")
-        elseif p.device isa ROCDevice
-            print(io, "ROCm")
-        else
-            print(io, "<unknown device>")
-        end
-        println(io, " (block size: $(p.block_size))")
-    end
+    print_device_info(io, pad, p)
     print_parameter(io, pad, "MPI", p.use_MPI)
 
     println(io, " ", "─" ^ (pad*2+2))
@@ -465,16 +444,20 @@ print_parameters(p::ArmonParameters) = print_parameters(stdout, p)
 Base.show(io::IO, p::ArmonParameters) = print_parameters(io::IO, p::ArmonParameters)
 
 
-function init_kokkos_project(flt_type, cmake_options, kokkos_options)
-    !Kokkos.is_initialized() && error("'use_kokkos=true' but Kokkos has not yet been initialized")
-    Kokkos.require(types=[flt_type], dims=[1])
-    armon_cpp_lib_src = joinpath(@__DIR__, "..", "lib", "armon_cpp")
-    armon_cpp_lib_build = joinpath(Kokkos.KOKKOS_BUILD_DIR, "armon_cpp")
-    armon_cpp = CMakeKokkosProject(armon_cpp_lib_src, "libarmon_cpp";
-        build_dir=armon_cpp_lib_build, cmake_options, kokkos_options)
-    option!(armon_cpp, "USE_SINGLE_PRECISION", flt_type == Float32; prefix="")
-    return armon_cpp
+function init_device(::Val{D}, _) where D
+    error("Unknown GPU device: $D")
 end
+
+
+function init_device(::Val{:CPU}, is_root)
+    # Useful in some cases for debugging
+    is_root && @warn "`use_gpu=true` but the device is set to the CPU. \
+                      Therefore no kernel will run on a GPU." maxlog=1
+    return CPU()
+end
+
+function init_backend(::Val{D}) where D end
+function post_init_device(::Val{D}, params) where D end
 
 
 """
@@ -503,32 +486,8 @@ function Base.copy(p::ArmonParameters{T}) where T
 end
 
 
-function get_host_array(params::ArmonParameters)
-    if params.device isa Kokkos.ExecutionSpace
-        return Kokkos.View{T, D,
-            Kokkos.array_layout(Kokkos.DEFAULT_HOST_SPACE),
-            Kokkos.DEFAULT_HOST_MEM_SPACE
-        } where {T, D}
-    else
-        return Array
-    end
-end
-
-
-function get_device_array(params::ArmonParameters)
-    if params.device isa CUDADevice
-        return CuArray
-    elseif params.device isa ROCDevice
-        return ROCArray
-    elseif params.device isa Kokkos.ExecutionSpace
-        return Kokkos.View{T, D,
-            Kokkos.array_layout(params.device),
-            Kokkos.memory_space(params.device)
-        } where {T, D}
-    else  # params.device isa CPU
-        return Array
-    end
-end
+host_array_type(::D) where D = Array
+device_array_type(::D) where D = Array
 
 
 function alloc_host_kwargs(params::ArmonParameters)
@@ -758,10 +717,6 @@ function ghost_domain(params::ArmonParameters, side::Side)
 end
 
 
-function Base.wait(params::ArmonParameters, dependencies)
-    if params.use_kokkos
-        Kokkos.fence()
-    else
-        wait(dependencies)
-    end
+function Base.wait(_::ArmonParameters, dependencies)
+    wait(dependencies)
 end

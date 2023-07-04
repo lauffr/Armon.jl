@@ -241,7 +241,7 @@ function armon(params::ArmonParameters{T}) where T
     params.write_output && write_sub_domain_file(params, data, params.output_file)
     params.write_slices && write_slices_files(params, data, params.output_file)
 
-    if params.measure_time && params.silent < 3
+    if params.measure_time && params.silent < 3 && !isinteractive()
         show(params.timer)
         println()
     end

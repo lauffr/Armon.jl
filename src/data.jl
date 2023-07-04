@@ -3,10 +3,9 @@
     ArmonData{V}
 
 Generic array holder for all variables and temporary variables used throughout the solver.
-`V` can be a `Vector` of floats (`Float32` or `Float64`) on CPU, `CuArray` or `ROCArray` on GPU.
-`Vector`, `CuArray` and `ROCArray` are all subtypes of `AbstractArray`.
 """
-struct ArmonData{V}
+struct ArmonData{V <: AbstractArray}
+    # TODO: rename some variables (rho -> ρ, umat -> u, work_array_1 -> work_1, ustar -> uˢ, etc...)
     x            :: V
     y            :: V
     rho          :: V
@@ -85,15 +84,17 @@ end
 
 
 """
-    ArmonDualData{DeviceArray, HostArray}
+    ArmonDualData{DeviceArray, HostArray, Device}
 
-Holds two version of `ArmonData`, one for the device and one for the host, as well as the buffers
+Holds two version of `ArmonData`, one for the `Device` and one for the host, as well as the buffers
 necessary for the halo exchange.
 
-If the host and device are the same, the `device` and `host` fields point to the same data.
+If the host and device are the same, the `device_data` and `host_data` fields point to the same data.
+
+`device` might be a `KernelAbstractions.Device`, `AMDGPU.ROCDevice` or `Kokkos.ExecutionSpace`.
 """
-struct ArmonDualData{DeviceArray <: AbstractArray, HostArray <: AbstractArray}
-    device       :: GenericDevice
+struct ArmonDualData{DeviceArray <: AbstractArray, HostArray <: AbstractArray, Device}
+    device       :: Device
     device_data  :: ArmonData{DeviceArray}
     host_data    :: ArmonData{HostArray}
     comm_buffers :: Dict{Side, NamedTuple{(:send, :recv), NTuple{2, MPI.Buffer{HostArray}}}}
@@ -102,8 +103,8 @@ end
 
 
 function ArmonDualData(params::ArmonParameters{T}) where T
-    device_array = get_device_array(params){T, 1}
-    host_array = get_host_array(params){T, 1}
+    device_array = device_array_type(params.device){T, 1}
+    host_array = host_array_type(params.device){T, 1}
 
     device_data = ArmonData(device_array, params.nbcell, params.comm_array_size; alloc_device_kwargs(params)...)
     if host_array == device_array
@@ -128,7 +129,7 @@ function ArmonDualData(params::ArmonParameters{T}) where T
         )
     end
 
-    return ArmonDualData{array_type(device_data), array_type(host_data)}(
+    return ArmonDualData{array_type(device_data), array_type(host_data), typeof(params.device)}(
         params.device, device_data, host_data, comm_buffers, requests
     )
 end
@@ -172,11 +173,8 @@ function get_send_comm_array(data::ArmonDualData{D, H}, side::Side) where {D, H}
     else
         comm_array = device(data).work_array_4
     end
-    if device_type(data) isa Kokkos.ExecutionSpace
-        return Kokkos.subview(comm_array, Base.OneTo(length(send_buffer(data, side).data)))
-    else
-        return view(comm_array, Base.OneTo(length(send_buffer(data, side).data)))
-    end
+    array_range = Base.OneTo(length(send_buffer(data, side).data))
+    return view(comm_array, array_range)
 end
 
 get_recv_comm_array(data::ArmonDualData{D, H}, side::Side) where {D, H} = get_send_comm_array(data, side)
@@ -227,16 +225,11 @@ end
 
 
 function copy_to_send_buffer!(data::ArmonDualData{D, H}, array::D, buffer::H;
-        dependencies=NoneEvent()) where {D, H}
-    if device_type(data) isa Kokkos.ExecutionSpace
-        # Kokkos backend
-        array_data = Kokkos.subview(array, 1:length(buffer))
-        return Kokkos.deep_copy(buffer, array_data)  # synchronous deep copy
-    else
-        array_data = view(array, 1:length(buffer))
-        wait(dependencies)  # We cannot wait for CPU events on the GPU
-        return async_copy!(device_type(data), buffer, array_data)
-    end
+    dependencies=NoneEvent()
+) where {D, H}
+    array_data = view(array, 1:length(buffer))
+    wait(dependencies)  # We cannot wait for CPU events on the GPU
+    return async_copy!(device_type(data), buffer, array_data)
 end
 
 
@@ -248,16 +241,11 @@ end
 
 
 function copy_from_recv_buffer!(data::ArmonDualData{D, H}, array::D, buffer::H;
-        dependencies=NoneEvent()) where {D, H}
-    if device_type(data) isa Kokkos.ExecutionSpace
-        # Kokkos backend
-        array_data = Kokkos.subview(array, 1:length(buffer))
-        return Kokkos.deep_copy(array_data, buffer)  # synchronous deep copy
-    else
-        array_data = view(array, 1:length(buffer))
-        wait(dependencies)  # We cannot wait for CPU events on the GPU
-        return async_copy!(device_type(data), array_data, buffer)
-    end
+    dependencies=NoneEvent()
+) where {D, H}
+    array_data = view(array, 1:length(buffer))
+    wait(dependencies)  # We cannot wait for CPU events on the GPU
+    return async_copy!(device_type(data), array_data, buffer)
 end
 
 

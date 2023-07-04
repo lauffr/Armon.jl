@@ -5,7 +5,8 @@
 ARMON_EXPORT flt_t dt_CFL(
         void* p_ptr,
         int64_t loop_range_start, int64_t loop_range_step, int64_t loop_range_end,
-        const view& umat, const view& vmat, const view& cmat, const view& domain_mask)
+        const view& umat, const view& vmat, const view& cmat, const view& domain_mask,
+        flt_t dx, flt_t dy)
 ARMON_TRY {
     ArmonParams p{p_ptr};
     RangeType range_type{};
@@ -16,12 +17,7 @@ ARMON_TRY {
 
     APPLY_4(CHECK_VIEW_LABEL, umat, vmat, cmat, domain_mask);
 
-    auto [g_nx, g_ny] = p.global_grid();
-    auto [sx, sy] = p.domain_size();
-
     flt_t dt = INFINITY;
-    flt_t dx = sx / flt_t(g_nx);
-    flt_t dy = sy / flt_t(g_ny);
 
     Kokkos::parallel_reduce(range_type,
     KOKKOS_LAMBDA(const UIdx lin_i, flt_t& dt_loop) {

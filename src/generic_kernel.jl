@@ -495,12 +495,13 @@ function make_kokkos_kernel_call(func_name, cpu_kernel_def, is_V_in_where, loop_
 
     kokkos_def[:args] = kernel_args
 
-    if is_V_in_where
+    # TODO: disabled since whereparams are evaluated immediately, therefore Kokkos is undefined
+    #=if is_V_in_where
         kokkos_def[:whereparams] = map(kokkos_def[:whereparams]) do where_p
             (where_p isa Expr && @capture(where_p, V <: AbstractArray{T})) || return where_p
-            return :(V <: Armon.Kokkos.View{T})
+            return :(V <: Main.Kokkos.View{T})
         end
-    end
+    end=#
 
     if endswith(string(func_name), "!")
         func_name = string(func_name)[1:end-1] |> Symbol
@@ -508,7 +509,7 @@ function make_kokkos_kernel_call(func_name, cpu_kernel_def, is_V_in_where, loop_
     func_name_quote = QuoteNode(func_name)
 
     kokkos_def[:body] = quote
-        ccall(Armon.Kokkos.get_symbol(params.kokkos_lib, $func_name_quote), Cvoid, CCallTypes)
+        ccall(Main.Kokkos.get_symbol(params.kokkos_lib, $func_name_quote), Cvoid, CCallTypes)
     end
 
     body_ccall_args = kokkos_def[:body].args[2].args

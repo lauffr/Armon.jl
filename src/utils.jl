@@ -29,5 +29,10 @@ function offset_to(side::Side)
 end
 
 
-# ROCKernels uses AMDGPU's ROCDevice, unlike CUDAKernels and KernelsAbstractions
-GenericDevice = Union{Device, ROCDevice, Kokkos.ExecutionSpace}
+"""
+    CPU_HP
+
+Device tag for the high-performance CPU backend using multithreading (with Polyester.jl) and
+vectorisation.
+"""
+struct CPU_HP end

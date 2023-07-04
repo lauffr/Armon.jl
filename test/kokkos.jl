@@ -7,7 +7,6 @@ if !Kokkos.is_initialized()
     Kokkos.set_backends(split(TEST_KOKKOS_BACKEND, ',') .|> strip)
     Kokkos.initialize()
 end
-Kokkos.require(; dims=[1], types=[Float64])
 
 
 function run_armon_cpp_reference(ref_params::ArmonParameters)

@@ -440,59 +440,60 @@ function projection_remap!(params::ArmonParameters, data::ArmonDualData; depende
 end
 
 
+function dtCFL_kernel(::ArmonParameters{T, CPU_HP}, data::ArmonData, range, dx, dy) where T
+    (; cmat, umat, vmat, domain_mask) = data
+
+    @batch threadlocal=typemax(T) for i in range
+        dt_x = dx / (max(abs(umat[i] + cmat[i]), abs(umat[i] - cmat[i])) * domain_mask[i])
+        dt_y = dy / (max(abs(vmat[i] + cmat[i]), abs(vmat[i] - cmat[i])) * domain_mask[i])
+        threadlocal = min(threadlocal, dt_x, dt_y)
+    end
+
+    return minimum(threadlocal)
+end
+
+
+function dtCFL_kernel(::ArmonParameters{<:Any, <:Device}, ::ArmonData, range, dx, dy)
+    (; cmat, umat, vmat, domain_mask) = data
+
+    # We need the absolute value of the divisor since the result of the max can be negative,
+    # because of some IEEE 754 non-compliance since fast math is enabled when compiling this code
+    # for GPU, e.g.: `@fastmath max(-0., 0.) == -0.`, while `max(-0., 0.) == 0.`
+    # If the mask is 0, then: `dx / -0.0 == -Inf`, which will then make the result incorrect.
+    dt_x = @inbounds reduce(min, @views (dx ./ abs.(
+        max.(
+            abs.(umat[range] .+ cmat[range]), 
+            abs.(umat[range] .- cmat[range])
+        ) .* domain_mask[range])))
+    dt_y = @inbounds reduce(min, @views (dy ./ abs.(
+        max.(
+            abs.(vmat[range] .+ cmat[range]), 
+            abs.(vmat[range] .- cmat[range])
+        ) .* domain_mask[range])))
+
+    return min(dt_x, dt_y)
+end
+
+
 function local_time_step(
     params::ArmonParameters{T}, data::ArmonData{V}, prev_dt::T;
     dependencies=NoneEvent()
 ) where {T, V <: AbstractArray{T}}
-    (; cmat, umat, vmat, domain_mask, work_array_1) = data
     (; cfl, Dt, ideb, ifin, global_grid, domain_size) = params
     @indexing_vars(params)
 
     (g_nx, g_ny) = global_grid
     (sx, sy) = domain_size
-
-    dt::T = Inf
     dx::T = sx / g_nx
     dy::T = sy / g_ny
 
     if params.cst_dt
         # Constant time step
         return Dt
-    elseif params.use_kokkos
-        dt = kokkos_dtCFL(params, data, ideb:ifin)
-    elseif params.use_gpu && params.device isa ROCDevice
-        # AMDGPU supports ArrayProgramming, but AMDGPU.mapreduce! is not as efficient as 
-        # CUDA.mapreduce! for large broadcasted arrays. Therefore we first compute all time
-        # steps and store them in a work array to then reduce it.
-        gpu_dtCFL_reduction_euler! = gpu_dtCFL_reduction_euler_kernel!(params.device, params.block_size)
-        gpu_dtCFL_reduction_euler!(dx, dy, work_array_1, umat, vmat, cmat, domain_mask;
-            ndrange=length(cmat), dependencies) |> wait
-        dt = reduce(min, work_array_1)
-    elseif params.use_gpu
-        wait(dependencies)
-        # We need the absolute value of the divisor since the result of the max can be negative,
-        # because of some IEEE 754 non-compliance since fast math is enabled when compiling this
-        # code for GPU, e.g.: `@fastmath max(-0., 0.) == -0.`, while `max(-0., 0.) == 0.`
-        # If the mask is 0, then: `dx / -0.0 == -Inf`, which will then make the result incorrect.
-        dt_x = @inbounds reduce(min, @views (dx ./ abs.(
-            max.(
-                abs.(umat[ideb:ifin] .+ cmat[ideb:ifin]), 
-                abs.(umat[ideb:ifin] .- cmat[ideb:ifin])
-            ) .* domain_mask[ideb:ifin])))
-        dt_y = @inbounds reduce(min, @views (dy ./ abs.(
-            max.(
-                abs.(vmat[ideb:ifin] .+ cmat[ideb:ifin]), 
-                abs.(vmat[ideb:ifin] .- cmat[ideb:ifin])
-            ) .* domain_mask[ideb:ifin])))
-        dt = min(dt_x, dt_y)
-    else
-        @batch threadlocal=typemax(T) for i in ideb:ifin
-            dt_x = dx / (max(abs(umat[i] + cmat[i]), abs(umat[i] - cmat[i])) * domain_mask[i])
-            dt_y = dy / (max(abs(vmat[i] + cmat[i]), abs(vmat[i] - cmat[i])) * domain_mask[i])
-            threadlocal = min(threadlocal, dt_x, dt_y)
-        end
-        dt = minimum(threadlocal)
     end
+
+    wait(dependencies)
+    dt = dtCFL_kernel(params, data, ideb:ifin, dx, dy)
 
     if !isfinite(dt) || dt ≤ 0
         return dt  # Error handling will happen after
@@ -541,31 +542,42 @@ function time_step(params::ArmonParameters, data::ArmonDualData; dependencies=No
 end
 
 
-function conservation_vars(params::ArmonParameters{T}, data::ArmonDualData) where T
-    (; rho, Emat, domain_mask) = device(data)
-    (; ideb, ifin, dx) = params
+function conservation_vars_kernel(params::ArmonParameters{T, CPU_HP}, data::ArmonData, range) where T
+    (; rho, Emat, domain_mask) = data
+    (; dx) = params
 
-    total_mass::T = zero(T)
-    total_energy::T = zero(T)
-
-    if params.use_kokkos
-        total_mass, total_energy = kokkos_conservation_vars(params, device(data), ideb:ifin)
-    elseif params.use_gpu
-        total_mass = @inbounds reduce(+, @views (
-            rho[ideb:ifin] .* domain_mask[ideb:ifin] .* (dx * dx)))
-        total_energy = @inbounds reduce(+, @views (
-            rho[ideb:ifin] .* Emat[ideb:ifin] .* domain_mask[ideb:ifin] .* (dx * dx)))
-    else
-        ds = dx * dx
-        @batch threadlocal=zeros(T, 2) for i in ideb:ifin
-            threadlocal[1] += rho[i] * ds           * domain_mask[i]  # mass
-            threadlocal[2] += rho[i] * ds * Emat[i] * domain_mask[i]  # energy
-        end
-
-        threadlocal  = sum(threadlocal)  # Reduce the result of each thread
-        total_mass   = threadlocal[1]
-        total_energy = threadlocal[2]
+    ds = dx * dx
+    @batch threadlocal=zeros(T, 2) for i in range
+        threadlocal[1] += rho[i] * ds           * domain_mask[i]  # mass
+        threadlocal[2] += rho[i] * ds * Emat[i] * domain_mask[i]  # energy
     end
+
+    threadlocal  = sum(threadlocal)  # Reduce the result of each thread
+    total_mass   = threadlocal[1]
+    total_energy = threadlocal[2]
+
+    return total_mass, total_energy
+end
+
+
+function conservation_vars_kernel(params::ArmonParameters{T, <:Device}, data::ArmonData, range) where T
+    (; rho, Emat, domain_mask) = data
+    (; dx) = params
+
+    ds = dx * dx
+    total_mass = @inbounds reduce(+, @views (
+        rho[range] .* domain_mask[range] .* ds))
+    total_energy = @inbounds reduce(+, @views (
+        rho[range] .* Emat[range] .* domain_mask[range] .* ds))
+
+    return total_mass, total_energy
+end
+
+
+function conservation_vars(params::ArmonParameters{T}, data::ArmonDualData) where T
+    (; ideb, ifin) = params
+
+    total_mass, total_energy = conservation_vars_kernel(params, device(data), ideb:ifin)
 
     if params.use_MPI
         total_mass   = MPI.Allreduce(total_mass,   MPI.SUM, params.cart_comm)

@@ -8,6 +8,8 @@ function write_data_to_file(params::ArmonParameters, data::ArmonDataOrDual,
     p = params.output_precision
     format = Printf.Format(join(repeat(["%#$(p+7).$(p)e"], length(vars_to_write)), ", ") * "\n")
 
+    # TODO: center the positions of the cells
+
     for j in col_range
         for i in row_range
             if direct_indexing

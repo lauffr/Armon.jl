@@ -26,7 +26,7 @@ add_library(armon_cpp SHARED
         kernels/reductions.cpp
         kernels/halo_exchange.cpp)
 
-target_link_libraries(armon_cpp PRIVATE Kokkos::kokkos)
+target_link_libraries(armon_cpp PUBLIC Kokkos::kokkos)
 target_include_directories(armon_cpp PUBLIC ${CMAKE_SOURCE_DIR})
 target_compile_options(armon_cpp PRIVATE
         $<$<CONFIG:Debug>:-Wall -Wextra -Wpedantic>)
