@@ -74,7 +74,7 @@ Compute the number of bytes needed on the device to allocate all data arrays
 While the result is precise, it does not account for additional memory required by MPI buffers and
 the solver.
 """
-memory_required(params::ArmonParameters{T}) where T = memory_required_for(params.nbcell, T)
+memory_required(params::ArmonParameters{T}) where T = memory_required(params.nbcell, T)
 
 function memory_required(N, float_type)
     field_count = fieldcount(ArmonData{Vector{float_type}})

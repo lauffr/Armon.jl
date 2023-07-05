@@ -358,7 +358,7 @@ end
 
 
 function print_parameters(io::IO, p::ArmonParameters; pad = 20)
-    println(io, "Armon parameters")
+    println(io, "Armon parameters:")
     print_parameter(io, pad, "ieee_bits", sizeof(data_type(p)) * 8)
     print_device_info(io, pad, p)
     print_parameter(io, pad, "MPI", p.use_MPI)
@@ -389,8 +389,11 @@ function print_parameters(io::IO, p::ArmonParameters; pad = 20)
     end
     print_parameter(io, pad, "time step", "", nl=false)
     print(io, p.Dt != 0 ? "starting at $(p.Dt), " :  "initiatlized automatically, ")
-    p.cst_dt && print(io, "constant, ")
-    println(io, "updated ", p.dt_on_even_cycles ? "only at even cycles" : "every cycle")
+    if p.cst_dt
+        println(io, "constant")
+    else
+        println(io, "updated ", p.dt_on_even_cycles ? "only at even cycles" : "every cycle")
+    end
     print_parameter(io, pad, "CFL", p.cfl)
 
     println(io, " ", "─" ^ (pad*2+2))
@@ -458,6 +461,31 @@ end
 
 function init_backend(::Val{D}) where D end
 function post_init_device(::Val{D}, params) where D end
+
+
+"""
+    memory_info(params)
+
+The total and free memory the current process can store on the `params.device`.
+"""
+function memory_info(params::ArmonParameters)
+    mem_info = device_memory_info(params.device)
+    # TODO: MPI support
+    return mem_info
+end
+
+
+"""
+    device_memory_info(device)
+
+The total and free memory on the device, in bytes.
+"""
+function device_memory_info(::Union{CPU_HP, CPU})
+    return (
+        total = UInt64(Sys.total_physical_memory()),
+        free  = UInt64(Sys.free_physical_memory())
+    )
+end
 
 
 """

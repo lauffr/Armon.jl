@@ -125,6 +125,21 @@ function Armon.print_device_info(io::IO, pad::Int, p::ArmonParameters{<:Any, <:K
 end
 
 
+function Armon.device_memory_info(exec::Kokkos.ExecutionSpace)
+    if exec isa Kokkos.Cuda || exec isa Kokkos.HIP
+        free, total = Kokkos.BackendFunctions.memory_info()
+        return (
+            total = UInt64(total),
+            free  = UInt64(free)
+        )
+    elseif exec isa Kokkos.Serial || exec isa Kokkos.OpenMP
+        return Armon.device_memory_info(CPU_HP())
+    else
+        error("`device_memory_info` for $(Kokkos.main_space_type(exec)) NYI")
+    end
+end
+
+
 function Base.wait(::ArmonParameters{<:Any, <:Kokkos.ExecutionSpace}, _)
     Kokkos.fence()
 end

@@ -453,7 +453,7 @@ function dtCFL_kernel(::ArmonParameters{T, CPU_HP}, data::ArmonData, range, dx, 
 end
 
 
-function dtCFL_kernel(::ArmonParameters{<:Any, <:Device}, ::ArmonData, range, dx, dy)
+function dtCFL_kernel(::ArmonParameters{<:Any, <:Device}, data::ArmonData, range, dx, dy)
     (; cmat, umat, vmat, domain_mask) = data
 
     # We need the absolute value of the divisor since the result of the max can be negative,

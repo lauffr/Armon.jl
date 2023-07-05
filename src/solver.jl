@@ -35,10 +35,9 @@ function init_time_step(params::ArmonParameters, data::ArmonDualData)
         time_step(params, data) && return true
         params.curr_cycle_dt = params.next_cycle_dt
     else
-        params.next_cycle_dt = Dt
-        params.curr_cycle_dt = Dt
+        params.next_cycle_dt = params.Dt
+        params.curr_cycle_dt = params.Dt
     end
-
     return false
 end
 
@@ -185,7 +184,7 @@ end
 function armon(params::ArmonParameters{T}) where T
     (; silent, is_root, timer) = params
 
-    if is_root && silent < 3
+    if is_root && silent < 3 && !isinteractive()
         print_parameters(params)
     end
 
