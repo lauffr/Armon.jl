@@ -17,14 +17,6 @@ if TEST_KOKKOS_MPI
     using Kokkos
 
     if is_root && !Kokkos.is_initialized()
-        invalid_config = !Kokkos.require(;
-            dims=[1], types=[Float64], no_error=true
-        )
-        if invalid_config
-            @warn "Invalid Kokkos configuration"
-            Kokkos.configinfo()
-            MPI.Abort(MPI.COMM_WORLD, 1)
-        end
         Kokkos.load_wrapper_lib()
     end
 
