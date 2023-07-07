@@ -140,7 +140,7 @@ function Armon.device_memory_info(exec::Kokkos.ExecutionSpace)
 end
 
 
-function Base.wait(::ArmonParameters{<:Any, <:Kokkos.ExecutionSpace}, _)
+function Base.wait(::ArmonParameters{<:Any, <:Kokkos.ExecutionSpace})
     Kokkos.fence()
 end
 
@@ -204,27 +204,25 @@ end
 # Copies
 #
 
-function Armon.copy_to_send_buffer!(::ArmonDualData{D, H, <:Kokkos.ExecutionSpace}, array::D, buffer::H;
-    dependencies=NoneEvent()
+function Armon.copy_to_send_buffer!(data::ArmonDualData{D, H, <:Kokkos.ExecutionSpace},
+    array::D, buffer::H
 ) where {D, H}
-    wait(dependencies)
     array_data = Kokkos.subview(array, 1:length(buffer))
-    Kokkos.deep_copy(buffer, array_data)  # TODO: change to asynchronous deep copy
-    return NoneEvent()
+    Kokkos.deep_copy(device_type(data), buffer, array_data)
 end
 
 
-function Armon.copy_from_recv_buffer!(::ArmonDualData{D, H, <:Kokkos.ExecutionSpace}, array::D, buffer::H;
-    dependencies=NoneEvent()
+function Armon.copy_from_recv_buffer!(data::ArmonDualData{D, H, <:Kokkos.ExecutionSpace},
+    array::D, buffer::H
 ) where {D, H}
-    wait(dependencies)
     array_data = Kokkos.subview(array, 1:length(buffer))
-    Kokkos.deep_copy(array_data, buffer)  # TODO: change to asynchronous deep copy
-    return NoneEvent()
+    Kokkos.deep_copy(device_type(data), array_data, buffer)
 end
 
 
-function Armon.get_send_comm_array(data::ArmonDualData{D, H, <:Kokkos.ExecutionSpace}, side::Side) where {D, H}
+function Armon.get_send_comm_array(data::ArmonDualData{D, H, <:Kokkos.ExecutionSpace},
+    side::Side
+) where {D, H}
     # Kokkos functions (like deep_copy, etc...) called on the comm array require an actual
     # Kokkos.View, not a view.
     array_view = Base.invoke(Armon.get_send_comm_array, Tuple{ArmonDualData{D, H, Any}}, data, side)
