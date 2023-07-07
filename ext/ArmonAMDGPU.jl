@@ -40,7 +40,7 @@ function Armon.dtCFL_kernel(params::ArmonParameters{<:Any, <:ROCDevice}, data::A
     # AMDGPU supports ArrayProgramming, but AMDGPU.mapreduce! is not as efficient as 
     # CUDA.mapreduce! for large broadcasted arrays. Therefore we first compute all time
     # steps and store them in a work array to then reduce it.
-    gpu_dtCFL_reduction_euler! = gpu_dtCFL_reduction_euler_kernel!(params.device, params.block_size)
+    gpu_dtCFL_reduction_euler! = Armon.gpu_dtCFL_reduction_euler_kernel!(params.device, params.block_size)
     gpu_dtCFL_reduction_euler!(dx, dy, work_array_1, umat, vmat, cmat, domain_mask;
         ndrange=length(cmat)) |> wait
 
