@@ -83,7 +83,8 @@ function cmp_halo_exchange_function(side; kwargs...)
         Armon.read_border_array!(kokkos_params, kokkos_data, kokkos_comm_array, side)
         Kokkos.fence()
 
-        Armon.read_border_array!(ref_params, ref_data, ref_comm_array, side) |> wait
+        Armon.read_border_array!(ref_params, ref_data, ref_comm_array, side)
+        Kokkos.fence()
 
         copyto!(host_kokkos_comm_array, kokkos_comm_array)
         @test host_kokkos_comm_array == host_ref_comm_array
@@ -94,7 +95,8 @@ function cmp_halo_exchange_function(side; kwargs...)
         Armon.write_border_array!(kokkos_params, kokkos_data_2, kokkos_comm_array, side)
         Kokkos.fence()
 
-        Armon.write_border_array!(ref_params, ref_data_2, ref_comm_array, side) |> wait
+        Armon.write_border_array!(ref_params, ref_data_2, ref_comm_array, side)
+        Kokkos.fence()
 
         device_to_host!(kokkos_data_2)
         @test host(kokkos_data_2).rho  == host(ref_data_2).rho

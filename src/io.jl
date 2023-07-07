@@ -247,9 +247,9 @@ function compare_with_file(params::ArmonParameters, data::ArmonData,
 end
 
 
-function step_checkpoint(params::ArmonParameters, data::ArmonDualData, step_label::String; dependencies=NoneEvent())
+function step_checkpoint(params::ArmonParameters, data::ArmonDualData, step_label::String)
     if params.compare
-        wait(params, dependencies)
+        wait(params)
 
         device_to_host!(data)
         h_data = host(data)

@@ -302,19 +302,16 @@ end
 
 function numericalFluxes!(
     params::ArmonParameters, data::ArmonDualData, 
-    range::DomainRange, label::Symbol;
-    dependencies=NoneEvent()
+    range::DomainRange, label::Symbol
 )
     dt = params.cycle_dt
     d_data = device(data)
     u = params.current_axis == X_axis ? d_data.umat : d_data.vmat
     if params.riemann == :acoustic  # 2-state acoustic solver (Godunov)
         if params.scheme == :Godunov
-            return acoustic!(params, d_data, range, d_data.ustar, d_data.pstar, u; 
-                dependencies)
+            return acoustic!(params, d_data, range, d_data.ustar, d_data.pstar, u)
         elseif params.scheme == :GAD
-            return acoustic_GAD!(params, d_data, range, dt, u, params.riemann_limiter; 
-                dependencies)
+            return acoustic_GAD!(params, d_data, range, dt, u, params.riemann_limiter)
         else
             error("Unknown acoustic scheme: ", params.scheme)
         end
@@ -324,10 +321,7 @@ function numericalFluxes!(
 end
 
 
-function numericalFluxes!(
-    params::ArmonParameters, data::ArmonDualData, label::Symbol;
-    dependencies=NoneEvent()
-)
+function numericalFluxes!(params::ArmonParameters, data::ArmonDualData, label::Symbol)
     (; steps_ranges) = params
 
     if label == :inner
@@ -346,31 +340,22 @@ function numericalFluxes!(
         error("Wrong region label: $label")
     end
 
-    return numericalFluxes!(params, data, range, label; dependencies)
+    return numericalFluxes!(params, data, range, label)
 end
 
 
-function update_EOS!(
-    params::ArmonParameters{T}, data::ArmonData, ::TestCase, range::DomainRange;
-    dependencies
-) where T
-    gamma::T = 7/5
-    return update_perfect_gas_EOS!(params, data, range, gamma; dependencies)
+function update_EOS!(params::ArmonParameters, data::ArmonData, ::TestCase, range::DomainRange)
+    gamma = data_type(params)(7/5)
+    return update_perfect_gas_EOS!(params, data, range, gamma)
 end
 
 
-function update_EOS!(
-    params::ArmonParameters, data::ArmonData, ::Bizarrium, range::DomainRange;
-    dependencies
-)
-    return update_bizarrium_EOS!(params, data, range; dependencies)
+function update_EOS!(params::ArmonParameters, data::ArmonData, ::Bizarrium, range::DomainRange)
+    return update_bizarrium_EOS!(params, data, range)
 end
 
 
-function update_EOS!(
-    params::ArmonParameters, data::ArmonDualData, label::Symbol;
-    dependencies=NoneEvent()
-)
+function update_EOS!(params::ArmonParameters, data::ArmonDualData, label::Symbol)
     (; steps_ranges) = params
 
     if label == :inner
@@ -389,7 +374,7 @@ function update_EOS!(
         error("Wrong region label: $label")
     end
 
-    return update_EOS!(params, device(data), params.test, range; dependencies)
+    return update_EOS!(params, device(data), params.test, range)
 end
 
 
@@ -398,11 +383,11 @@ function init_test(params::ArmonParameters, data::ArmonDualData)
 end
 
 
-function cellUpdate!(params::ArmonParameters, data::ArmonDualData; dependencies=NoneEvent())
+function cellUpdate!(params::ArmonParameters, data::ArmonDualData)
     range = params.steps_ranges.cell_update
     d_data = device(data)
     u = params.current_axis == X_axis ? d_data.umat : d_data.vmat
-    return cell_update!(params, d_data, range, params.cycle_dt, u; dependencies)
+    return cell_update!(params, d_data, range, params.cycle_dt, u)
 end
 
 
@@ -414,7 +399,7 @@ function slope_minmod(uᵢ₋::T, uᵢ::T, uᵢ₊::T, r₋::T, r₊::T) where T
 end
 
 
-function projection_remap!(params::ArmonParameters, data::ArmonDualData; dependencies=NoneEvent())
+function projection_remap!(params::ArmonParameters, data::ArmonDualData)
     d_data = device(data)
     (; work_array_1, work_array_2, work_array_3, work_array_4) = d_data
     advection_ρ  = work_array_1
@@ -426,17 +411,17 @@ function projection_remap!(params::ArmonParameters, data::ArmonDualData; depende
     projection_range = params.steps_ranges.projection
 
     @timeit params.timer "Advection" if params.projection == :euler
-        event = first_order_euler_remap!(params, d_data, advection_range, params.cycle_dt,
-            advection_ρ, advection_uρ, advection_vρ, advection_Eρ; dependencies)
+        first_order_euler_remap!(params, d_data, advection_range, params.cycle_dt,
+            advection_ρ, advection_uρ, advection_vρ, advection_Eρ)
     elseif params.projection == :euler_2nd
-        event = second_order_euler_remap!(params, d_data, advection_range, params.cycle_dt,
-            advection_ρ, advection_uρ, advection_vρ, advection_Eρ; dependencies)
+        second_order_euler_remap!(params, d_data, advection_range, params.cycle_dt,
+            advection_ρ, advection_uρ, advection_vρ, advection_Eρ)
     else
         error("Unknown projection scheme: $(params.projection)")
     end
 
     return @timeit params.timer "Projection" euler_projection!(params, d_data, projection_range, params.cycle_dt,
-        advection_ρ, advection_uρ, advection_vρ, advection_Eρ; dependencies=event)
+        advection_ρ, advection_uρ, advection_vρ, advection_Eρ)
 end
 
 
@@ -453,7 +438,7 @@ function dtCFL_kernel(::ArmonParameters{T, CPU_HP}, data::ArmonData, range, dx, 
 end
 
 
-function dtCFL_kernel(::ArmonParameters{<:Any, <:Device}, data::ArmonData, range, dx, dy)
+function dtCFL_kernel(::ArmonParameters{<:Any, <:GPU}, data::ArmonData, range, dx, dy)
     (; cmat, umat, vmat, domain_mask) = data
 
     # We need the absolute value of the divisor since the result of the max can be negative,
@@ -477,7 +462,6 @@ end
 
 function local_time_step(
     params::ArmonParameters{T}, data::ArmonData{V}, prev_dt::T;
-    dependencies=NoneEvent()
 ) where {T, V <: AbstractArray{T}}
     (; cfl, Dt, ideb, ifin, global_grid, domain_size) = params
     @indexing_vars(params)
@@ -492,7 +476,6 @@ function local_time_step(
         return Dt
     end
 
-    wait(dependencies)
     dt = dtCFL_kernel(params, data, ideb:ifin, dx, dy)
 
     if !isfinite(dt) || dt ≤ 0
@@ -506,7 +489,7 @@ function local_time_step(
 end
 
 
-function time_step(params::ArmonParameters, data::ArmonDualData; dependencies=NoneEvent())
+function time_step(params::ArmonParameters, data::ArmonDualData)
     (; Dt, dt_on_even_cycles, cycle, cst_dt, is_root, cart_comm) = params
 
     params.curr_cycle_dt = params.next_cycle_dt
@@ -515,7 +498,7 @@ function time_step(params::ArmonParameters, data::ArmonDualData; dependencies=No
         params.next_cycle_dt = Dt
     elseif !dt_on_even_cycles || iseven(cycle) || params.curr_cycle_dt == 0
         @timeit params.timer "local_time_step" begin
-            local_dt = local_time_step(params, device(data), params.curr_cycle_dt; dependencies)
+            local_dt = local_time_step(params, device(data), params.curr_cycle_dt)
         end
 
         if params.use_MPI
@@ -560,7 +543,7 @@ function conservation_vars_kernel(params::ArmonParameters{T, CPU_HP}, data::Armo
 end
 
 
-function conservation_vars_kernel(params::ArmonParameters{T, <:Device}, data::ArmonData, range) where T
+function conservation_vars_kernel(params::ArmonParameters{T, <:GPU}, data::ArmonData, range) where T
     (; rho, Emat, domain_mask) = data
     (; dx) = params
 

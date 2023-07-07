@@ -63,7 +63,7 @@ mutable struct ArmonParameters{Flt_T, Device}
     use_simd::Bool
     use_gpu::Bool
     use_kokkos::Bool
-    device::Device
+    device::Device  # A KernelAbstractions.Backend, Kokkos.ExecutionSpace or CPU_HP
     block_size::Int
 
     # MPI
@@ -745,6 +745,11 @@ function ghost_domain(params::ArmonParameters, side::Side)
 end
 
 
-function Base.wait(_::ArmonParameters, dependencies)
-    wait(dependencies)
+function Base.wait(::ArmonParameters{<:Any, <:Union{CPU, CPU_HP}})
+    # CPU backends are synchronous
+end
+
+
+function Base.wait(params::ArmonParameters{<:Any, GPU})
+    KernelAbstractions.synchronize(params.device)
 end

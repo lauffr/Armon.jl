@@ -23,7 +23,7 @@ end
 
 
 macro checkpoint(step_label)
-    esc(:(step_checkpoint(params, data, string($step_label); dependencies)))
+    esc(:(step_checkpoint(params, data, string($step_label))))
 end
 
 
@@ -42,9 +42,9 @@ function init_time_step(params::ArmonParameters, data::ArmonDualData)
 end
 
 
-function solver_cycle(params::ArmonParameters, data::ArmonDualData; dependencies=NoneEvent())
+function solver_cycle(params::ArmonParameters, data::ArmonDualData)
     (; timer) = params
-    (@timeit timer "time_step" time_step(params, data; dependencies)) && @goto stop
+    (@timeit timer "time_step" time_step(params, data)) && @goto stop
 
     for (axis, dt_factor) in split_axes(params)
         update_axis_parameters(params, axis)
@@ -54,46 +54,48 @@ function solver_cycle(params::ArmonParameters, data::ArmonDualData; dependencies
         @timeit timer "$axis" begin
 
         if params.async_comms
-            dependencies = @timeit timer "EOS lb" update_EOS!(params, data, :outer_lb; dependencies)
-            dependencies = @timeit timer "EOS rt" update_EOS!(params, data, :outer_rt; dependencies)
+            @timeit timer "EOS lb" update_EOS!(params, data, :outer_lb)
+            @timeit timer "EOS rt" update_EOS!(params, data, :outer_rt)
 
-            outer_lb_BC = @timeit timer "BC lb" boundaryConditions!(params, data, :outer_lb; dependencies)
-            outer_rt_BC = @timeit timer "BC rt" boundaryConditions!(params, data, :outer_rt; dependencies)
+            channel = Channel{Task}(Inf)
 
-            dependencies = @timeit timer "EOS" update_EOS!(params, data, :inner; dependencies)
-            dependencies = @timeit timer "fluxes" numericalFluxes!(params, data, :inner; dependencies)
+            # TODO: execute both BC while the fluxes are being calculated
+            @timeit timer "BC lb" boundaryConditions!(params, data, :outer_lb, channel)
+            @timeit timer "BC rt" boundaryConditions!(params, data, :outer_rt, channel)
 
-            dependencies = MultiEvent((dependencies, outer_lb_BC, outer_rt_BC))
-            dependencies = @timeit timer "Post BC" post_boundary_conditions(params, data; dependencies)
+            @timeit timer "EOS" update_EOS!(params, data, :inner)
+            @timeit timer "fluxes" numericalFluxes!(params, data, :inner)
 
-            dependencies = @timeit timer "fluxes lb" numericalFluxes!(params, data, :outer_lb; dependencies)
-            dependencies = @timeit timer "fluxes rt" numericalFluxes!(params, data, :outer_rt; dependencies)
+            # TODO: more async logic between outer domains
+
+            @timeit timer "fluxes lb" numericalFluxes!(params, data, :outer_lb)
+            @timeit timer "fluxes rt" numericalFluxes!(params, data, :outer_rt)
 
             # TODO: async cellUpdate?
         else
-            dependencies = @timeit timer "EOS" update_EOS!(params, data, :full; dependencies)
+            @timeit timer "EOS" update_EOS!(params, data, :full)
             @checkpoint("update_EOS") && @goto stop
 
-            dependencies = @timeit timer "BC" boundaryConditions!(params, data; dependencies)
+            @timeit timer "BC" boundaryConditions!(params, data)
             @checkpoint("boundaryConditions") && @goto stop
 
-            dependencies = @timeit timer "fluxes" numericalFluxes!(params, data, :full; dependencies)
+            @timeit timer "fluxes" numericalFluxes!(params, data, :full)
             @checkpoint("numericalFluxes") && @goto stop
         end
 
-        dependencies = @timeit timer "update" cellUpdate!(params, data; dependencies)
+        @timeit timer "update" cellUpdate!(params, data)
         @checkpoint("cellUpdate") && @goto stop
 
-        dependencies = @timeit timer "remap" projection_remap!(params, data; dependencies)
+        @timeit timer "remap" projection_remap!(params, data)
         @checkpoint("projection_remap") && @goto stop
 
         end
     end
 
-    return dependencies, false
+    return false
 
     @label stop
-    return dependencies, true
+    return true
 end
 
 
@@ -115,20 +117,18 @@ function time_loop(params::ArmonParameters, data::ArmonDualData)
 
     (@timeit params.timer "init_time_step" init_time_step(params, data)) && @goto stop
 
-    dependencies = NoneEvent()
-
     # Main solver loop
     while params.time < maxtime && params.cycle < maxcycle
         cycle_start = time_ns()
 
-        dependencies, stop = @timeit params.timer "solver_cycle" solver_cycle(params, data; dependencies)
+        stop = @timeit params.timer "solver_cycle" solver_cycle(params, data)
         stop && @goto stop
 
         total_cycles_time += time_ns() - cycle_start
 
         if is_root
             if silent <= 1
-                wait(params, dependencies)
+                wait(params)
                 current_mass, current_energy = conservation_vars(params, data)
                 ΔM = abs(initial_mass - current_mass)     / initial_mass   * 100
                 ΔE = abs(initial_energy - current_energy) / initial_energy * 100
@@ -136,7 +136,7 @@ function time_loop(params::ArmonParameters, data::ArmonDualData)
                     params.cycle + 1, params.curr_cycle_dt, params.time, ΔM, ΔE)
             end
         elseif silent <= 1
-            wait(params, dependencies)
+            wait(params)
             conservation_vars(params, data)
         end
 
@@ -144,14 +144,14 @@ function time_loop(params::ArmonParameters, data::ArmonDualData)
         params.time += params.curr_cycle_dt
 
         if animation_step != 0 && (params.cycle - 1) % animation_step == 0
-            wait(params, dependencies)
+            wait(params)
             frame_index = (params.cycle - 1) ÷ animation_step
             frame_file = joinpath("anim", params.output_file) * "_" * @sprintf("%03d", frame_index)
             write_sub_domain_file(params, data, frame_file)
         end
     end
 
-    wait(params, dependencies)
+    wait(params)
 
     @label stop
 
@@ -221,7 +221,10 @@ function armon(params::ArmonParameters{T}) where T
     # policy when working on CPU only
     @timeit timer "init" begin
         data = @timeit timer "alloc" ArmonDualData(params)
-        @timeit timer "init_test" wait(params, init_test(params, data))
+        @timeit timer "init_test" begin
+            init_test(params, data)
+            wait(params)
+        end
     end
 
     dt, cycles, cells_per_sec = time_loop(params, data)

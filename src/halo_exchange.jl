@@ -62,49 +62,52 @@ end
 end
 
 
-
-function read_border_array!(params::ArmonParameters, data::ArmonDualData, comm_array, side::Side;
-        dependencies=NoneEvent())
+function read_border_array!(params::ArmonParameters, data::ArmonDualData, comm_array, side::Side)
     (; nx, ny) = params
 
     range = border_domain(params, side)
     side_length = (side == Left || side == Right) ? ny : nx
 
-    return read_border_array!(params, device(data), range, side_length, comm_array; dependencies)
+    return read_border_array!(params, device(data), range, side_length, comm_array)
 end
 
 
-function write_border_array!(params::ArmonParameters, data::ArmonDualData, comm_array, side::Side;
-        dependencies=NoneEvent())
+function write_border_array!(params::ArmonParameters, data::ArmonDualData, comm_array, side::Side)
     (; nx, ny) = params
 
     range = ghost_domain(params, side)
     side_length = (side == Left || side == Right) ? ny : nx
 
-    return write_border_array!(params, device(data), range, side_length, comm_array; dependencies)
+    return write_border_array!(params, device(data), range, side_length, comm_array)
 end
 
 
-function copy_border_array_to_buffer!(params::ArmonParameters, data::ArmonDualData, side::Side;
-        dependencies=NoneEvent())
+function copy_border_array_to_buffer!(params::ArmonParameters, data::ArmonDualData, side::Side)
     comm_array = get_send_comm_array(data, side)
-    dependencies = read_border_array!(params, data, comm_array, side; dependencies)
-    dependencies = copy_to_send_buffer!(data, comm_array, side; dependencies)
-    return dependencies
+    read_border_array!(params, data, comm_array, side)
+    copy_to_send_buffer!(data, comm_array, side)
 end
 
 
-function copy_buffer_to_border_array!(params::ArmonParameters, data::ArmonDualData, side::Side;
-        dependencies=NoneEvent())
+function copy_buffer_to_border_array!(params::ArmonParameters, data::ArmonDualData, side::Side)
     comm_array = get_recv_comm_array(data, side)
-    dependencies = copy_from_recv_buffer!(data, comm_array, side; dependencies)
-    dependencies = write_border_array!(params, data, comm_array, side; dependencies)
-    return dependencies
+    copy_from_recv_buffer!(data, comm_array, side;)
+    write_border_array!(params, data, comm_array, side)
 end
 
 
-function boundaryConditions!(params::ArmonParameters{T}, data::ArmonDualData, side::Side;
-        dependencies=NoneEvent()) where T
+function request_task(dependency, request)
+    wait(dependency)
+    MPI.Start(request)
+    done = false
+    while !done
+        done = MPI.Test(request)
+        yield()
+    end
+end
+
+
+function boundaryConditions!(params::ArmonParameters{T}, data::ArmonDualData, side::Side, channel) where T
     if !has_neighbour(params, side)
         # No neighbour: global domain boundary conditions
         (u_factor::T, v_factor::T) = boundaryCondition(side, params.test)
@@ -112,27 +115,41 @@ function boundaryConditions!(params::ArmonParameters{T}, data::ArmonDualData, si
 
         i_start -= stride  # Adjust for the fact that `@index_1D_lin()` is 1-indexed
 
-        return boundaryConditions!(params, device(data), loop_range, stride, i_start, d, 
-            u_factor, v_factor; dependencies)
+        boundaryConditions!(params, device(data), loop_range, stride, i_start, d, u_factor, v_factor)
     else
         # Exchange with the neighbour the cells on the side
-        dependencies = copy_border_array_to_buffer!(params, data, side; dependencies)
+        copy_border_array_to_buffer!(params, data, side)
+
+        send_request = data.requests[side].send
+        recv_request = data.requests[side].recv
 
         if params.use_MPI && params.async_comms
             # Schedule the asynchronous exchange to start when the copy is done
-            return Event(data.requests[side]; dependencies) do requests
-                MPI.Start(requests.send)
-                MPI.Start(requests.recv)
+            error("MPI async comms NYI")
+
+            copy_done = Threads.Event()
+            # TODO: notify(copy_done)  =>  in the copy task
+            # TODO: wait for the copy to be done
+
+            send_task = Threads.@spawn request_task(copy_done, send_request)
+            recv_task = Threads.@spawn request_task(copy_done, recv_request)
+
+            put!(channel, send_task)
+            put!(channel, recv_task)
+
+            copy_recv_task = Threads.@spawn begin
+                wait(recv_task)
+                # TODO: wait that the inner domain has been updated first (EOS)
+                copy_buffer_to_border_array!(params, data, side)
             end
+
+            put!(channel, copy_recv_task)
         else
             # Launch the communications and wait for their completion now in order to be able to 
             # measure them. 
-            wait(params, dependencies)
+            wait(params)
 
             @timeit params.timer "MPI" begin
-                send_request = data.requests[side].send
-                recv_request = data.requests[side].recv
-
                 MPI.Start(send_request)
                 MPI.Start(recv_request)
 
@@ -140,14 +157,13 @@ function boundaryConditions!(params::ArmonParameters{T}, data::ArmonDualData, si
                 MPI.Wait(recv_request)
             end
 
-            return copy_buffer_to_border_array!(params, data, side)
+            copy_buffer_to_border_array!(params, data, side)
         end
     end
 end
 
 
-function boundaryConditions!(params::ArmonParameters, data::ArmonDualData, sides::Tuple{Vararg{Side}};
-        dependencies=NoneEvent())
+function boundaryConditions!(params::ArmonParameters, data::ArmonDualData, sides::Tuple{Vararg{Side}}, channel)
     # TODO : use active RMA instead? => maybe but it will (maybe) not work with GPUs: 
     #   https://www.open-mpi.org/faq/?category=runcuda
     # TODO : use CUDA/ROCM-aware MPI
@@ -162,50 +178,25 @@ function boundaryConditions!(params::ArmonParameters, data::ArmonDualData, sides
         end
     end
 
-    events = Event[]
     for side in sides
-        push!(events, boundaryConditions!(params, data, side; dependencies))
+        boundaryConditions!(params, data, side, channel)
     end
-    dependencies = MultiEvent(tuple(events...))
-
-    return dependencies
 end
 
 
-function boundaryConditions!(params::ArmonParameters, data::ArmonDualData, sides::Symbol; dependencies=NoneEvent())
+function boundaryConditions!(params::ArmonParameters, data::ArmonDualData, sides::Symbol, channel)
     if sides === :outer_lb
         side = params.current_axis == X_axis ? Left : Bottom
-        boundaryConditions!(params, data, (side,); dependencies)
+        boundaryConditions!(params, data, (side,), channel)
     elseif sides === :outer_rt
         side = params.current_axis == X_axis ? Right : Top
-        boundaryConditions!(params, data, (side,); dependencies)
+        boundaryConditions!(params, data, (side,), channel)
     else
         error("Unknown sides: $sides")
     end
 end
 
 
-function boundaryConditions!(params::ArmonParameters, data::ArmonDualData; dependencies=NoneEvent())
-    boundaryConditions!(params, data, sides_along(params.current_axis); dependencies)
-end
-
-
-function post_boundary_conditions(params::ArmonParameters, data::ArmonDualData;
-        dependencies=NoneEvent())
-    !params.use_MPI && return dependencies
-
-    # Parallelize each wait and the work after each request completion
-
-    send_events = map(iter_send_requests(data)) do (_, send_request)
-        Event(MPI.Wait, send_request; dependencies)
-    end
-
-    recv_events = map(iter_recv_requests(data)) do (side, recv_request)
-        recv_deps = Event(MPI.Wait, recv_request; dependencies)
-        return copy_buffer_to_border_array!(params, data, side; dependencies=recv_deps)
-    end
-
-    dependencies = MultiEvent((send_events..., recv_events...))
-    wait(dependencies)  # TODO: temporary solution for preventing the GPU to wait for CPU events
-    return NoneEvent()
+function boundaryConditions!(params::ArmonParameters, data::ArmonDualData)
+    boundaryConditions!(params, data, sides_along(params.current_axis), nothing)
 end
