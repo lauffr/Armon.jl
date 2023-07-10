@@ -15,7 +15,7 @@ Armon.device_array_type(::CUDADevice) = CUDA.CuArray
 
 
 function Armon.print_device_info(io::IO, pad::Int, p::ArmonParameters{<:Any, <:CUDADevice})
-    print_parameter(io, pad, "GPU", true, nl=false)
+    Armon.print_parameter(io, pad, "GPU", true, nl=false)
     println(io, ": CUDA (block size: $(p.block_size))")
 end
 
