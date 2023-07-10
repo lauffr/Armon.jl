@@ -750,6 +750,6 @@ function Base.wait(::ArmonParameters{<:Any, <:Union{CPU, CPU_HP}})
 end
 
 
-function Base.wait(params::ArmonParameters{<:Any, GPU})
+function Base.wait(params::ArmonParameters{<:Any, <:GPU})
     KernelAbstractions.synchronize(params.device)
 end

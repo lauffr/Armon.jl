@@ -280,23 +280,6 @@ end
 end
 
 #
-# GPU-only Kernels
-#
-
-@kernel function gpu_dtCFL_reduction_euler_kernel!(dx, dy, out, umat, vmat, cmat, domain_mask)
-    i = @index(Global)
-
-    c = cmat[i]
-    u = umat[i]
-    v = vmat[i]
-    mask = domain_mask[i]
-
-    dt_x = dx / abs(max(abs(u + c), abs(u - c)) * mask)
-    dt_y = dy / abs(max(abs(v + c), abs(v - c)) * mask)
-    out[i] = min(dt_x, dt_y)
-end
-
-#
 # Wrappers
 #
 

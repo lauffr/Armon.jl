@@ -1,7 +1,7 @@
 name = "Armon"
 uuid = "b773a7a3-b593-48d6-82f6-54bf745a629b"
 authors = ["Luc Briand <luc.briand35@gmail.com> and contributors"]
-version = "0.3.0"
+version = "0.3.1"
 
 [deps]
 AMDGPU = "21141c5a-9bdb-4563-92ae-f87d6854732e"
@@ -17,8 +17,8 @@ ThreadPinning = "811555cd-349b-4f26-b7bc-1f208b848042"
 TimerOutputs = "a759f4b9-e2f1-59dc-863e-4aeb61b1ea8f"
 
 [compat]
-AMDGPU = "^0.4.9"
-CUDA = "^4.1.0"
+AMDGPU = "0.4, 0.5"
+CUDA = "≥ 4.1.0"
 KernelAbstractions = "0.9"
 julia = "1.9"
 
