@@ -3,7 +3,7 @@ project(armon_cpp)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-set(CMAKE_CXX_FLAGS_RELEASE "-O3")
+set(CMAKE_CXX_FLAGS_RELEASE "-O3 -ffast-math")
 
 find_package(Kokkos REQUIRED)
 
