@@ -42,6 +42,9 @@ default_max_time(::Union{Sod, Sod_y, Sod_circ}) = 0.20
 default_max_time(::Bizarrium) = 80e-6
 default_max_time(::Sedov) = 1.0
 
+is_conservative(::TestCase) = true
+is_conservative(::Bizarrium) = false
+
 Base.show(io::IO, ::Sod)       = print(io, "Sod shock tube")
 Base.show(io::IO, ::Sod_y)     = print(io, "Sod shock tube (along the Y axis)")
 Base.show(io::IO, ::Sod_circ)  = print(io, "Sod shock tube (cylindrical symmetry around the Z axis)")

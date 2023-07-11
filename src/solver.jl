@@ -100,7 +100,7 @@ end
 
 
 function time_loop(params::ArmonParameters, data::ArmonDualData)
-    (; maxtime, maxcycle, nx, ny, silent, animation_step, is_root) = params
+    (; maxtime, maxcycle, nx, ny, silent, animation_step, is_root, initial_mass, initial_energy) = params
 
     params.cycle = 0
     params.time = 0
@@ -108,10 +108,6 @@ function time_loop(params::ArmonParameters, data::ArmonDualData)
     params.next_cycle_dt = 0
 
     total_cycles_time = 0.
-
-    if silent <= 1
-        initial_mass, initial_energy = conservation_vars(params, data)
-    end
 
     t1 = time_ns()
 
@@ -227,7 +223,34 @@ function armon(params::ArmonParameters{T}) where T
         end
     end
 
+    if params.check_result || params.silent <= 1
+        @timeit timer "Conservation variables" begin
+            params.initial_mass, params.initial_energy = conservation_vars(params, data) 
+        end
+    end
+
     dt, cycles, cells_per_sec = time_loop(params, data)
+
+    if params.check_result && is_conservative(params.test)
+        @timeit timer "Conservation variables" begin
+            final_mass, final_energy = conservation_vars(params, data) 
+        end
+
+        if params.is_root
+            Δm = abs(final_mass   - params.initial_mass)   / params.initial_mass
+            Δe = abs(final_energy - params.initial_energy) / params.initial_energy
+
+            # 1% of relative error, or 10⁻¹¹ of absolute error, whichever is greater. 
+            Δm_ok = isapprox(Δm, 0; atol=1e-11, rtol=1e-2)
+            Δe_ok = isapprox(Δe, 0; atol=1e-11, rtol=1e-2)
+
+            if !(Δm_ok && Δe_ok)
+                @warn "Mass and energy are not constant, the solution might not be valid!\n\
+                    |mₑ-mᵢ|/mᵢ = $(@sprintf("%#8.6g", Δm))\n\
+                    |Eₑ-Eᵢ|/Eᵢ = $(@sprintf("%#8.6g", Δe))\n"
+            end
+        end
+    end
 
     if params.measure_time
         disable_timer!(timer)
@@ -239,7 +262,10 @@ function armon(params::ArmonParameters{T}) where T
         params.measure_time ? copy(timer) : nothing
     )
 
-    device_to_host!(data)  # No-op on host
+    if params.return_data || params.write_output || params.write_slices
+        device_to_host!(data)  # No-op if the host is the device
+    end
+
     params.write_output && write_sub_domain_file(params, data, params.output_file)
     params.write_slices && write_slices_files(params, data, params.output_file)
 

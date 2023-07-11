@@ -87,6 +87,9 @@ mutable struct ArmonParameters{Flt_T, Device}
     is_ref::Bool
     comparison_tolerance::Float64
     debug_indexes::Bool
+    check_result::Bool
+    initial_mass::Flt_T
+    initial_energy::Flt_T
 
     # Misc.
     kokkos_project::Any
@@ -114,6 +117,7 @@ function ArmonParameters(;
         use_MPI = true, px = 1, py = 1, reorder_grid = true, global_comm = nothing,
         async_comms = false,
         compare = false, is_ref = false, comparison_tolerance = 1e-10, debug_indexes = false,
+        check_result = false,
         return_data = false
     )
 
@@ -321,6 +325,7 @@ function ArmonParameters(;
         async_comms,
 
         compare, is_ref, comparison_tolerance, debug_indexes,
+        check_result, zero(flt_type), zero(flt_type),
 
         armon_cpp, kokkos_lib,
     )
@@ -388,7 +393,7 @@ function print_parameters(io::IO, p::ArmonParameters; pad = 20)
         println(io, "<unknown>")
     end
     print_parameter(io, pad, "time step", "", nl=false)
-    print(io, p.Dt != 0 ? "starting at $(p.Dt), " :  "initiatlized automatically, ")
+    print(io, p.Dt != 0 ? "starting at $(p.Dt), " :  "initialized automatically, ")
     if p.cst_dt
         println(io, "constant")
     else
@@ -402,6 +407,7 @@ function print_parameters(io::IO, p::ArmonParameters; pad = 20)
     print_parameter(io, pad, "max cycle", p.maxcycle)
     print_parameter(io, pad, "measure step times", p.measure_time)
     print_parameter(io, pad, "verbosity", p.silent)
+    print_parameter(io, pad, "check result", p.check_result)
 
     if p.write_output
         print_parameter(io, pad, "write output", p.write_output, nl=false)
