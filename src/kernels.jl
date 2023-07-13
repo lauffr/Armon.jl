@@ -393,7 +393,7 @@ function projection_remap!(params::ArmonParameters, data::ArmonDualData)
     advection_range = params.steps_ranges.advection
     projection_range = params.steps_ranges.projection
 
-    @timeit params.timer "Advection" if params.projection == :euler
+    @section "Advection" if params.projection == :euler
         first_order_euler_remap!(params, d_data, advection_range, params.cycle_dt,
             advection_ρ, advection_uρ, advection_vρ, advection_Eρ)
     elseif params.projection == :euler_2nd
@@ -403,7 +403,7 @@ function projection_remap!(params::ArmonParameters, data::ArmonDualData)
         error("Unknown projection scheme: $(params.projection)")
     end
 
-    return @timeit params.timer "Projection" euler_projection!(params, d_data, projection_range, params.cycle_dt,
+    return @section "Projection" euler_projection!(params, d_data, projection_range, params.cycle_dt,
         advection_ρ, advection_uρ, advection_vρ, advection_Eρ)
 end
 
@@ -480,12 +480,12 @@ function time_step(params::ArmonParameters, data::ArmonDualData)
     if cst_dt
         params.next_cycle_dt = Dt
     elseif !dt_on_even_cycles || iseven(cycle) || params.curr_cycle_dt == 0
-        @timeit params.timer "local_time_step" begin
+        @section "local_time_step" begin
             local_dt = local_time_step(params, device(data), params.curr_cycle_dt)
         end
 
         if params.use_MPI
-            @timeit params.timer "time_step Allreduce" begin
+            @section "time_step Allreduce" begin
                 # TODO: use a non-blocking IAllreduce, which would then be probed at the end of a cycle
                 #  however, we need to implement IAllreduce ourselves, since MPI.jl doesn't have a nice API for it (make a PR?)
                 next_dt = MPI.Allreduce(local_dt, MPI.Op(min, data_type(params)), cart_comm)

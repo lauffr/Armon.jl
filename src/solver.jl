@@ -43,59 +43,55 @@ end
 
 
 function solver_cycle(params::ArmonParameters, data::ArmonDualData)
-    (; timer) = params
-    (@timeit timer "time_step" time_step(params, data)) && @goto stop
+    (@section "time_step" time_step(params, data)) && return true
 
     for (axis, dt_factor) in split_axes(params)
         update_axis_parameters(params, axis)
         update_steps_ranges(params)
         params.cycle_dt = params.curr_cycle_dt * dt_factor
 
-        @timeit timer "$axis" begin
+        @section "$axis" begin
 
         if params.async_comms
-            @timeit timer "EOS lb" update_EOS!(params, data, :outer_lb)
-            @timeit timer "EOS rt" update_EOS!(params, data, :outer_rt)
+            @section "EOS lb" update_EOS!(params, data, :outer_lb)
+            @section "EOS rt" update_EOS!(params, data, :outer_rt)
 
             channel = Channel{Task}(Inf)
 
             # TODO: execute both BC while the fluxes are being calculated
-            @timeit timer "BC lb" boundaryConditions!(params, data, :outer_lb, channel)
-            @timeit timer "BC rt" boundaryConditions!(params, data, :outer_rt, channel)
+            @section "BC lb" async=true boundaryConditions!(params, data, :outer_lb, channel)
+            @section "BC rt" async=true boundaryConditions!(params, data, :outer_rt, channel)
 
-            @timeit timer "EOS" update_EOS!(params, data, :inner)
-            @timeit timer "fluxes" numericalFluxes!(params, data, :inner)
+            @section "EOS" async=true update_EOS!(params, data, :inner)
+            @section "fluxes" async=true numericalFluxes!(params, data, :inner)
 
             # TODO: more async logic between outer domains
 
-            @timeit timer "fluxes lb" numericalFluxes!(params, data, :outer_lb)
-            @timeit timer "fluxes rt" numericalFluxes!(params, data, :outer_rt)
+            @section "fluxes lb" async=true numericalFluxes!(params, data, :outer_lb)
+            @section "fluxes rt" async=true numericalFluxes!(params, data, :outer_rt)
 
             # TODO: async cellUpdate?
         else
-            @timeit timer "EOS" update_EOS!(params, data, :full)
-            @checkpoint("update_EOS") && @goto stop
+            @section "EOS" update_EOS!(params, data, :full)
+            @checkpoint("update_EOS") && return true
 
-            @timeit timer "BC" boundaryConditions!(params, data)
-            @checkpoint("boundaryConditions") && @goto stop
+            @section "BC" boundaryConditions!(params, data)
+            @checkpoint("boundaryConditions") && return true
 
-            @timeit timer "fluxes" numericalFluxes!(params, data, :full)
-            @checkpoint("numericalFluxes") && @goto stop
+            @section "fluxes" numericalFluxes!(params, data, :full)
+            @checkpoint("numericalFluxes") && return true
         end
 
-        @timeit timer "update" cellUpdate!(params, data)
-        @checkpoint("cellUpdate") && @goto stop
+        @section "update" cellUpdate!(params, data)
+        @checkpoint("cellUpdate") && return true
 
-        @timeit timer "remap" projection_remap!(params, data)
-        @checkpoint("projection_remap") && @goto stop
+        @section "remap" projection_remap!(params, data)
+        @checkpoint("projection_remap") && return true
 
         end
     end
 
     return false
-
-    @label stop
-    return true
 end
 
 
@@ -111,14 +107,14 @@ function time_loop(params::ArmonParameters, data::ArmonDualData)
 
     t1 = time_ns()
 
-    (@timeit params.timer "init_time_step" init_time_step(params, data)) && @goto stop
+    (@section "init_time_step" init_time_step(params, data)) && @goto stop
 
     # Main solver loop
     while params.time < maxtime && params.cycle < maxcycle
         cycle_start = time_ns()
 
-        stop = @timeit params.timer "solver_cycle" solver_cycle(params, data)
-        stop && @goto stop
+        stop = @section "solver_cycle" solver_cycle(params, data)
+        stop && break
 
         total_cycles_time += time_ns() - cycle_start
 
@@ -215,16 +211,16 @@ function armon(params::ArmonParameters{T}) where T
 
     # Allocate without initialisation in order to correctly map the NUMA space using the first-touch
     # policy when working on CPU only
-    @timeit timer "init" begin
-        data = @timeit timer "alloc" ArmonDualData(params)
-        @timeit timer "init_test" begin
+    @section "init" begin
+        data = @section "alloc" ArmonDualData(params)
+        @section "init_test" begin
             init_test(params, data)
             wait(params)
         end
     end
 
     if params.check_result || params.silent <= 1
-        @timeit timer "Conservation variables" begin
+        @section "Conservation variables" begin
             params.initial_mass, params.initial_energy = conservation_vars(params, data) 
         end
     end
@@ -232,7 +228,7 @@ function armon(params::ArmonParameters{T}) where T
     dt, cycles, cells_per_sec = time_loop(params, data)
 
     if params.check_result && is_conservative(params.test)
-        @timeit timer "Conservation variables" begin
+        @section "Conservation variables" begin
             final_mass, final_energy = conservation_vars(params, data) 
         end
 

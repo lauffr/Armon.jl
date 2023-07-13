@@ -149,7 +149,7 @@ function boundaryConditions!(params::ArmonParameters{T}, data::ArmonDualData, si
             # measure them. 
             wait(params)
 
-            @timeit params.timer "MPI" begin
+            @section "MPI" begin
                 MPI.Start(send_request)
                 MPI.Start(recv_request)
 
