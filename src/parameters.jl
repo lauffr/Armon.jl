@@ -56,6 +56,9 @@ mutable struct ArmonParameters{Flt_T, Device}
     animation_step::Int
     measure_time::Bool
     timer::TimerOutput
+    time_async::Bool
+    enable_profiling::Bool
+    profiling_info::Set{Symbol}
     return_data::Bool
 
     # Performance
@@ -110,7 +113,7 @@ function ArmonParameters(;
         silent = 0, output_dir = ".", output_file = "output",
         write_output = false, write_ghosts = false, write_slices = false, output_precision = nothing,
         animation_step = 0,
-        measure_time = true,
+        measure_time = true, time_async = true, profiling = Symbol[],
         use_threading = true, use_simd = true,
         use_gpu = false, device = :CUDA, block_size = 1024,
         use_kokkos = false, cmake_options = [], kokkos_options = nothing,
@@ -239,6 +242,17 @@ function ArmonParameters(;
         kokkos_lib = nothing
     end
 
+    # Profiling
+    profiling_info = Set{Symbol}(profiling)
+    measure_time && push!(profiling_info, :TimerOutputs)
+    enable_profiling = !isempty(profiling_info)
+
+    missing_prof = setdiff(profiling_info, (cb.name for cb in Armon.SECTION_PROFILING_CALLBACKS))
+    setdiff!(missing_prof, (cb.name for cb in Armon.KERNEL_PROFILING_CALLBACKS))
+    if !isempty(missing_prof)
+        error("Unknown profiler$(length(missing_prof) > 1 ? "s" : ""): " * join(missing_prof, ", "))
+    end
+
     # Initialize the test
     if isnothing(domain_size)
         domain_size = default_domain_size(test_type)
@@ -314,7 +328,8 @@ function ArmonParameters(;
 
         silent, output_dir, output_file,
         write_output, write_ghosts, write_slices, output_precision, animation_step,
-        measure_time, timer,
+        measure_time, timer, time_async,
+        enable_profiling, profiling_info,
         return_data,
 
         use_threading, use_simd, use_gpu, use_kokkos, device, block_size,
@@ -406,6 +421,12 @@ function print_parameters(io::IO, p::ArmonParameters; pad = 20)
     print_parameter(io, pad, "max time", p.maxtime, suffix=" sec")
     print_parameter(io, pad, "max cycle", p.maxcycle)
     print_parameter(io, pad, "measure step times", p.measure_time)
+    if !isempty(p.profiling_info)
+        profilers = copy(p.profiling_info)
+        p.measure_time && delete!(profilers, :TimerOutputs)
+        profilers_str = length(profilers) > 0 ? ": " * join(profilers, ", ") : ""
+        print_parameter(io, pad, "profiling", (p.enable_profiling ? "ON" : "OFF") * profilers_str)
+    end
     print_parameter(io, pad, "verbosity", p.silent)
     print_parameter(io, pad, "check result", p.check_result)
 

@@ -40,6 +40,10 @@ function Armon.device_memory_info(::ROCBackend)
     )
 end
 
+
+# TODO: profiling with rocprofile with roctracer library
+
+
 #
 # Time step
 #

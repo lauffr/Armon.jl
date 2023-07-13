@@ -631,6 +631,8 @@ function transform_kernel(func::Expr)
         @generated $(combinedef(kokkos_def))
     end
 
+    setup_kokkos_call = Expr(:block)
+
     # -- GPU --
 
     gpu_def = deepcopy(def)
@@ -691,6 +693,11 @@ function transform_kernel(func::Expr)
         @kernel $(combinedef(gpu_def))
     end
 
+    setup_gpu_call = quote
+        gpu_kernel_func = $kernel_func_name(params.device, params.block_size)
+        ndrange = $gpu_ndrange
+    end
+
     # -- Wrapping function --
 
     # Create the definition of the main function, which will take care of dispatching the arguments
@@ -736,35 +743,46 @@ function transform_kernel(func::Expr)
         end
     end
 
+    # Profiling
+    @gensym profiling_state
+    profiling_start = quote
+        $profiling_state = kernel_start(params, $(QuoteNode(func_name)))
+    end
+
+    profiling_end = quote
+        kernel_end(params, $(QuoteNode(func_name)), $profiling_state)
+    end
+
     # Build the kernel call expressions
     cpu_call = Expr(:call, cpu_def[:name], :params, loop_params_names..., call_args..., :threading, :simd)
     # Equivalent to: gpu_kernel_func(loop_params_names..., args...; ndrange)
     gpu_call = Expr(:call, :gpu_kernel_func, Expr(:parameters, :ndrange), gpu_loop_params_names..., call_args...)
 
-    cpu_call_block = quote
-        $setup_cpu_call
-        $cpu_call
-        return
-    end
-
-    kokkos_call_block = quote
-        $kokkos_call
-        return
-    end
-
-    gpu_call_block = quote
-        gpu_kernel_func = $kernel_func_name(params.device, params.block_size)  # Get the right KernelAbstraction function...
-        ndrange = $gpu_ndrange
-        return $gpu_call  # ...then call it
-    end
-
     call_block = quote
         if params.use_kokkos
-            $kokkos_call_block
+            $setup_kokkos_call
         elseif params.use_gpu
-            $gpu_call_block
+            $setup_gpu_call
         else
-            $cpu_call_block
+            $setup_cpu_call
+        end
+
+        if params.enable_profiling
+            $profiling_start
+        end
+
+        try
+            return if params.use_kokkos
+                $kokkos_call
+            elseif params.use_gpu
+                $gpu_call
+            else
+                $cpu_call
+            end
+        finally
+            if params.enable_profiling
+                $profiling_end
+            end
         end
     end
 
