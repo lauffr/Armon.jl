@@ -147,7 +147,7 @@ function time_loop(params::ArmonParameters, data::ArmonDualData)
         end
     end
 
-    wait(params)
+    @section "Last fence" wait(params)
 
     @label stop
 

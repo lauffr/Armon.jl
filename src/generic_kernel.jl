@@ -1,5 +1,8 @@
 
 const use_std_lib_threads = parse(Bool, get(ENV, "USE_STD_LIB_THREADS", "false"))
+const use_fast_math = parse(Bool, get(ENV, "ARMON_USE_FAST_MATH", "true"))
+const use_inbounds = parse(Bool, get(ENV, "ARMON_USE_INBOUNDS", "true"))
+
 
 """
 Controls which multi-threading library to use.
@@ -14,6 +17,13 @@ macro threads(expr)
             @batch $(expr)
         end)
     end
+end
+
+
+macro fast(expr)
+    expr = use_fast_math ? :(@fastmath $expr) : expr
+    expr = use_inbounds  ? :(@inbounds $expr) : expr
+    return esc(expr)
 end
 
 
@@ -437,6 +447,10 @@ function kernel_body_pass!(body::Expr, indexing_replacements::Dict{Symbol, Expr}
 
         # Replace the macro accordingly
         return unblock(indexing_replacements[stmt_indexing_type])
+    end
+
+    new_body = quote
+        @fast $new_body
     end
 
     return new_body, init_expr, indexing_type, used_indexing_types, options_list_to_dict(options)

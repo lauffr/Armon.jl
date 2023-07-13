@@ -45,16 +45,18 @@ end
 #
 
 @kernel function dtCFL_reduction(dx, dy, out, umat, vmat, cmat, domain_mask)
-    i = @index(Global)
+    Armon.@fast begin
+        i = @index(Global)
 
-    c = cmat[i]
-    u = umat[i]
-    v = vmat[i]
-    mask = domain_mask[i]
+        c = cmat[i]
+        u = umat[i]
+        v = vmat[i]
+        mask = domain_mask[i]
 
-    dt_x = dx / abs(max(abs(u + c), abs(u - c)) * mask)
-    dt_y = dy / abs(max(abs(v + c), abs(v - c)) * mask)
-    out[i] = min(dt_x, dt_y)
+        dt_x = dx / abs(max(abs(u + c), abs(u - c)) * mask)
+        dt_y = dy / abs(max(abs(v + c), abs(v - c)) * mask)
+        out[i] = min(dt_x, dt_y) 
+    end
 end
 
 
