@@ -240,9 +240,13 @@ function armon(params::ArmonParameters{T}) where T
             Δm = abs(final_mass   - params.initial_mass)   / params.initial_mass
             Δe = abs(final_energy - params.initial_energy) / params.initial_energy
 
-            # 1% of relative error, or 10⁻¹¹ of absolute error, whichever is greater. 
-            Δm_ok = isapprox(Δm, 0; atol=1e-11, rtol=1e-2)
-            Δe_ok = isapprox(Δe, 0; atol=1e-11, rtol=1e-2)
+            # Scale the tolerance with the progress in the default test case, therefore roughly
+            # accounting for the number of cells (more cells -> slower time step -> more precision).
+            rtol = 1e-2 * min(1, params.time / default_max_time(params.test))
+
+            # 1% of relative error, or 10⁻¹¹ of absolute error, whichever is greater.
+            Δm_ok = isapprox(Δm, 0; atol=1e-12, rtol)
+            Δe_ok = isapprox(Δe, 0; atol=1e-12, rtol)
 
             if !(Δm_ok && Δe_ok)
                 @warn "Mass and energy are not constant, the solution might not be valid!\n\
