@@ -27,23 +27,17 @@ macro checkpoint(step_label)
 end
 
 
-function init_time_step(params::ArmonParameters, data::ArmonDualData)
-    if params.Dt == 0
-        # No imposed initial time step, we must compute the first one manually
-        update_EOS!(params, data, :full)
-        step_checkpoint(params, data, "update_EOS_init") && return true
-        time_step(params, data) && return true
-        params.curr_cycle_dt = params.next_cycle_dt
-    else
-        params.next_cycle_dt = params.Dt
-        params.curr_cycle_dt = params.Dt
-    end
-    return false
-end
-
-
 function solver_cycle(params::ArmonParameters, data::ArmonDualData)
+    if params.cycle == 0
+        @section "EOS_init" update_EOS!(params, data, :full)
+        step_checkpoint(params, data, "EOS_init") && return true
+    end
+
     (@section "time_step" time_step(params, data)) && return true
+
+    if params.cycle == 0
+        params.curr_cycle_dt = params.next_cycle_dt
+    end
 
     for (axis, dt_factor) in split_axes(params)
         update_axis_parameters(params, axis)
@@ -73,7 +67,7 @@ function solver_cycle(params::ArmonParameters, data::ArmonDualData)
             # TODO: async cellUpdate?
         else
             @section "EOS" update_EOS!(params, data, :full)
-            @checkpoint("update_EOS") && return true
+            @checkpoint("EOS") && return true
 
             @section "BC" boundaryConditions!(params, data)
             @checkpoint("boundaryConditions") && return true
@@ -106,8 +100,6 @@ function time_loop(params::ArmonParameters, data::ArmonDualData)
     total_cycles_time = 0.
 
     t1 = time_ns()
-
-    (@section "init_time_step" init_time_step(params, data)) && @goto stop
 
     # Main solver loop
     while params.time < maxtime && params.cycle < maxcycle

@@ -428,18 +428,20 @@ function dtCFL_kernel(::ArmonParameters{<:Any, <:GPU}, data::ArmonData, range, d
     # because of some IEEE 754 non-compliance since fast math is enabled when compiling this code
     # for GPU, e.g.: `@fastmath max(-0., 0.) == -0.`, while `max(-0., 0.) == 0.`
     # If the mask is 0, then: `dx / -0.0 == -Inf`, which will then make the result incorrect.
-    dt_x = @inbounds reduce(min, @views (dx ./ abs.(
-        max.(
-            abs.(umat[range] .+ cmat[range]), 
-            abs.(umat[range] .- cmat[range])
-        ) .* domain_mask[range])))
-    dt_y = @inbounds reduce(min, @views (dy ./ abs.(
-        max.(
-            abs.(vmat[range] .+ cmat[range]), 
-            abs.(vmat[range] .- cmat[range])
-        ) .* domain_mask[range])))
-
-    return min(dt_x, dt_y)
+    return @inbounds reduce(min, @views(min.(
+        dx ./ abs.(
+            max.(
+                abs.(umat[range] .+ cmat[range]),
+                abs.(umat[range] .- cmat[range])
+            ) .* domain_mask[range]
+        ),
+        dy ./ abs.(
+            max.(
+                abs.(vmat[range] .+ cmat[range]),
+                abs.(vmat[range] .- cmat[range])
+            ) .* domain_mask[range]
+        )
+    )))
 end
 
 
