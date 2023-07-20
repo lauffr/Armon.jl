@@ -389,7 +389,7 @@ function print_parameters(io::IO, p::ArmonParameters; pad = 20)
     print_parameter(io, pad, "solver", p.riemann, nl=false)
     print(io, ", ", p.scheme, " scheme")
     if p.scheme != :Godunov
-        print("(with $(p.riemann_limiter))")
+        print(io, "(with $(p.riemann_limiter))")
     end
     proj_str = p.projection === :euler ? "1ˢᵗ order" : p.projection === :euler_2nd ? "2ⁿᵈ order" : "<unknown>"
     println(io, ", ", proj_str, " projection")

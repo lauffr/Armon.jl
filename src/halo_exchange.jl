@@ -123,7 +123,7 @@ function boundaryConditions!(params::ArmonParameters{T}, data::ArmonDualData, si
         send_request = data.requests[side].send
         recv_request = data.requests[side].recv
 
-        if params.use_MPI && params.async_comms
+        if params.async_comms
             # Schedule the asynchronous exchange to start when the copy is done
             error("MPI async comms NYI")
 
