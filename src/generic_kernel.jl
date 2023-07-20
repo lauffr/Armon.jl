@@ -27,6 +27,15 @@ macro fast(expr)
 end
 
 
+# TODO: check if all function calls (excluding Base, Core, CUDA, AMDGPU, KA...) in a kernel are for
+#  functions annotated with @kernel_function
+macro kernel_function(func)
+    func = :(@inline $func)
+    func = use_fast_math ? :(@fastmath $func) : func
+    return esc(func)
+end
+
+
 function make_threaded_loop(expr::Expr; choice=:dynamic)
     with = :(@inbounds @threads $(expr))
     without = :($(expr))

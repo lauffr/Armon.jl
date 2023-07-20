@@ -1,5 +1,5 @@
 
-function acoustic_Godunov(ρᵢ::T, ρᵢ₋₁::T, cᵢ::T, cᵢ₋₁::T, uᵢ::T, uᵢ₋₁::T, pᵢ::T, pᵢ₋₁::T) where T
+@kernel_function function acoustic_Godunov(ρᵢ::T, ρᵢ₋₁::T, cᵢ::T, cᵢ₋₁::T, uᵢ::T, uᵢ₋₁::T, pᵢ::T, pᵢ₋₁::T) where T
     rc_l = ρᵢ₋₁ * cᵢ₋₁
     rc_r = ρᵢ   * cᵢ
     ustarᵢ = (rc_l * uᵢ₋₁ + rc_r * uᵢ +               (pᵢ₋₁ - pᵢ)) / (rc_l + rc_r)
@@ -27,6 +27,69 @@ end
 ) where {T, V <: AbstractArray{T}, LimiterType <: Limiter}
     i = @index_2D_lin()
 
+#=
+    ρᵢ₋₂ₛ = rho[i-2s]
+    ρᵢ₋ₛ  = rho[i-s]
+    ρᵢ    = rho[i]
+    ρᵢ₊ₛ  = rho[i+s]
+
+    cᵢ₋₂ₛ = cmat[i-2s]
+    cᵢ₋ₛ  = cmat[i-s]
+    cᵢ    = cmat[i]
+    cᵢ₊ₛ  = cmat[i+s]
+
+    uᵢ₋₂ₛ = u[i-2s]
+    uᵢ₋ₛ  = u[i-s]
+    uᵢ    = u[i]
+    uᵢ₊ₛ  = u[i+s]
+
+    pᵢ₋₂ₛ = pmat[i-2s]
+    pᵢ₋ₛ  = pmat[i-s]
+    pᵢ    = pmat[i]
+    pᵢ₊ₛ  = pmat[i+s]
+
+    # First order acoustic solver on the left cell
+    ustar_i₋, pstar_i₋ = acoustic_Godunov(
+        ρᵢ₋ₛ, ρᵢ₋₂ₛ, cᵢ₋ₛ, cᵢ₋₂ₛ,
+        uᵢ₋ₛ, uᵢ₋₂ₛ, pᵢ₋ₛ, pᵢ₋₂ₛ
+    )
+
+    # First order acoustic solver on the current cell
+    ustar_i, pstar_i = acoustic_Godunov(
+        ρᵢ, ρᵢ₋ₛ, cᵢ, cᵢ₋ₛ,
+        uᵢ, uᵢ₋ₛ, pᵢ, pᵢ₋ₛ
+    )
+
+    # First order acoustic solver on the right cell
+    ustar_i₊, pstar_i₊ = acoustic_Godunov(
+        ρᵢ₊ₛ, ρᵢ, cᵢ₊ₛ, cᵢ,
+        uᵢ₊ₛ, uᵢ, pᵢ₊ₛ, pᵢpara
+    )
+
+    # Second order GAD acoustic solver on the current cell
+
+    r_u₋ = (ustar_i₊ - uᵢ) / (ustar_i - uᵢ₋ₛ + T(1e-6))
+    r_p₋ = (pstar_i₊ - pᵢ) / (pstar_i - pᵢ₋ₛ + T(1e-6))
+    r_u₊ = (uᵢ₋ₛ - ustar_i₋) / (uᵢ - ustar_i + T(1e-6))
+    r_p₊ = (pᵢ₋ₛ - pstar_i₋) / (pᵢ - pstar_i + T(1e-6))
+
+    r_u₋ = limiter(r_u₋, LimiterType())
+    r_p₋ = limiter(r_p₋, LimiterType())
+    r_u₊ = limiter(r_u₊, LimiterType())
+    r_p₊ = limiter(r_p₊, LimiterType())
+
+    dm_l = ρᵢ₋ₛ * dx
+    dm_r = ρᵢ   * dx
+    Dm   = (dm_l + dm_r) / 2
+
+    rc_l = ρᵢ₋ₛ * cᵢ₋ₛ
+    rc_r = ρᵢ   * cᵢ
+    θ    = T(0.5) * (1 - (rc_l + rc_r) / 2 * (dt / Dm))
+
+    ustar[i] = ustar_i + θ * (r_u₊ * (uᵢ - ustar_i) - r_u₋ * (ustar_i - uᵢ₋ₛ))
+    pstar[i] = pstar_i + θ * (r_p₊ * (pᵢ - pstar_i) - r_p₋ * (pstar_i - pᵢ₋ₛ))
+=#
+
     # First order acoustic solver on the left cell
     ustar_i₋, pstar_i₋ = acoustic_Godunov(
         rho[i-s], rho[i-2s], cmat[i-s], cmat[i-2s],
@@ -47,10 +110,10 @@ end
 
     # Second order GAD acoustic solver on the current cell
 
-    r_u₋ = (ustar_i₊ -      u[i]) / (ustar_i -    u[i-s] + 1e-6)
-    r_p₋ = (pstar_i₊ -   pmat[i]) / (pstar_i - pmat[i-s] + 1e-6)
-    r_u₊ = (   u[i-s] - ustar_i₋) / (   u[i] -   ustar_i + 1e-6)
-    r_p₊ = (pmat[i-s] - pstar_i₋) / (pmat[i] -   pstar_i + 1e-6)
+    r_u₋ = (ustar_i₊ -      u[i]) / (ustar_i -    u[i-s] + T(1e-6))
+    r_p₋ = (pstar_i₊ -   pmat[i]) / (pstar_i - pmat[i-s] + T(1e-6))
+    r_u₊ = (   u[i-s] - ustar_i₋) / (   u[i] -   ustar_i + T(1e-6))
+    r_p₊ = (pmat[i-s] - pstar_i₋) / (pmat[i] -   pstar_i + T(1e-6))
 
     r_u₋ = limiter(r_u₋, LimiterType())
     r_p₋ = limiter(r_p₋, LimiterType())
@@ -63,8 +126,8 @@ end
 
     rc_l = rho[i-s] * cmat[i-s]
     rc_r = rho[i]   * cmat[i]
-    θ    = 1/2 * (1 - (rc_l + rc_r) / 2 * (dt / Dm))
-    
+    θ    = T(0.5) * (1 - (rc_l + rc_r) / 2 * (dt / Dm))
+
     ustar[i] = ustar_i + θ * (r_u₊ * (   u[i] - ustar_i) - r_u₋ * (ustar_i -    u[i-s]))
     pstar[i] = pstar_i + θ * (r_p₊ * (pmat[i] - pstar_i) - r_p₋ * (pstar_i - pmat[i-s]))
 end
@@ -374,7 +437,7 @@ function cellUpdate!(params::ArmonParameters, data::ArmonDualData)
 end
 
 
-function slope_minmod(uᵢ₋::T, uᵢ::T, uᵢ₊::T, r₋::T, r₊::T) where T
+@kernel_function function slope_minmod(uᵢ₋::T, uᵢ::T, uᵢ₊::T, r₋::T, r₊::T) where T
     Δu₊ = r₊ * (uᵢ₊ - uᵢ )
     Δu₋ = r₋ * (uᵢ  - uᵢ₋)
     s = sign(Δu₊)
@@ -448,18 +511,13 @@ end
 function local_time_step(
     params::ArmonParameters{T}, data::ArmonData{V}, prev_dt::T;
 ) where {T, V <: AbstractArray{T}}
-    (; cfl, Dt, ideb, ifin, global_grid, domain_size) = params
+    (; cfl, ideb, ifin, global_grid, domain_size) = params
     @indexing_vars(params)
 
     (g_nx, g_ny) = global_grid
     (sx, sy) = domain_size
     dx::T = sx / g_nx
     dy::T = sy / g_ny
-
-    if params.cst_dt
-        # Constant time step
-        return Dt
-    end
 
     dt = dtCFL_kernel(params, data, ideb:ifin, dx, dy)
 
