@@ -8,19 +8,16 @@ const armon_domain = NVTX.Domain("Armon")
 
 
 function NVTX_range_start(::ArmonParameters, name::Symbol)
-    !NVTX.isactive() && return nothing
-
     # More or less equivalent to NVTX.@range
-    NVTX.init!(Armon_domain)
-    message = NVTX.StringHandle(Armon_domain, string(name))
+    NVTX.init!(armon_domain)
+    message = NVTX.StringHandle(armon_domain, string(name))
     color = hash(name) % UInt32
 
-    return NVTX.range_start(Armon_domain; message, color)
+    return NVTX.range_start(armon_domain; message, color)
 end
 
 
 function NVTX_range_end(::ArmonParameters, ::Symbol, state)
-    isnothing(state) && return
     NVTX.range_end(state)
 end
 
