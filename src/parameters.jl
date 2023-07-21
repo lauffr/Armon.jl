@@ -67,7 +67,7 @@ mutable struct ArmonParameters{Flt_T, Device}
     use_gpu::Bool
     use_kokkos::Bool
     device::Device  # A KernelAbstractions.Backend, Kokkos.ExecutionSpace or CPU_HP
-    block_size::Int
+    block_size::NTuple{3, Int}
 
     # MPI
     use_MPI::Bool
@@ -242,6 +242,9 @@ function ArmonParameters(;
         kokkos_lib = nothing
     end
 
+    length(block_size) > 3 && error("Expected `block_size` to contain up to 3 elements, got: $block_size")
+    block_size = tuple(block_size..., ntuple(Returns(1), 3 - length(block_size))...)
+
     # Profiling
     profiling_info = Set{Symbol}(profiling)
     measure_time && push!(profiling_info, :TimerOutputs)
@@ -373,7 +376,7 @@ end
 
 function print_device_info(io::IO, pad::Int, p::ArmonParameters{<:Any, CPU})
     print_parameter(io, pad, "GPU", true, nl=false)
-    println(io, ": KA.jl's CPU backend (block size: $(p.block_size))")
+    println(io, ": KA.jl's CPU backend (block size: ", join(p.block_size, '×'), ")")
 end
 
 

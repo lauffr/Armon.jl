@@ -17,7 +17,7 @@ Armon.device_array_type(::ROCBackend) = AMDGPU.ROCArray
 
 function Armon.print_device_info(io::IO, pad::Int, p::ArmonParameters{<:Any, <:ROCBackend})
     Armon.print_parameter(io, pad, "GPU", true, nl=false)
-    println(io, ": ROCm (block size: $(p.block_size))")
+    println(io, ": ROCm (block size: ", join(p.block_size, '×'), ")")
 end
 
 
