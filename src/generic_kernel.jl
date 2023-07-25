@@ -718,7 +718,7 @@ function transform_kernel(func::Expr)
 
     setup_gpu_call = quote
         gpu_kernel_func = $kernel_func_name(params.device, params.block_size)
-        ndrange = $gpu_ndrange
+        ndrange = ($gpu_ndrange, 1, 1)
     end
 
     # -- Wrapping function --

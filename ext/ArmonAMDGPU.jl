@@ -72,7 +72,7 @@ function Armon.dtCFL_kernel(params::ArmonParameters{<:Any, <:ROCBackend}, data::
     # Therefore we first compute all time steps and store them in a work array to then reduce it.
     dtCFL_reduction_kernel = dtCFL_reduction(params.device, params.block_size)
     dtCFL_reduction_kernel(dx, dy, work_array_1, umat, vmat, cmat, domain_mask;
-        ndrange=length(cmat))
+        ndrange=(length(cmat), 1, 1))
     KernelAbstractions.synchronize(params.device)
 
     return reduce(min, work_array_1)
