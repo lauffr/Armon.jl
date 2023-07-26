@@ -484,27 +484,23 @@ function dtCFL_kernel(::ArmonParameters{T, CPU_HP}, data::ArmonData, range, dx, 
 end
 
 
-function dtCFL_kernel(::ArmonParameters{<:Any, <:GPU}, data::ArmonData, range, dx, dy)
-    (; cmat, umat, vmat, domain_mask) = data
-
+@inline @fast function dtCFL_kernel_reduction(u::T, v::T, c::T, mask::T, dx::T, dy::T) where T
     # We need the absolute value of the divisor since the result of the max can be negative,
     # because of some IEEE 754 non-compliance since fast math is enabled when compiling this code
     # for GPU, e.g.: `@fastmath max(-0., 0.) == -0.`, while `max(-0., 0.) == 0.`
     # If the mask is 0, then: `dx / -0.0 == -Inf`, which will then make the result incorrect.
-    return @inbounds reduce(min, @views(min.(
-        dx ./ abs.(
-            max.(
-                abs.(umat[range] .+ cmat[range]),
-                abs.(umat[range] .- cmat[range])
-            ) .* domain_mask[range]
-        ),
-        dy ./ abs.(
-            max.(
-                abs.(vmat[range] .+ cmat[range]),
-                abs.(vmat[range] .- cmat[range])
-            ) .* domain_mask[range]
-        )
-    )))
+    return min(
+        dx / abs(max(abs(u + c), abs(u - c)) * mask),
+        dy / abs(max(abs(v + c), abs(v - c)) * mask)
+    )
+end
+
+
+function dtCFL_kernel(::ArmonParameters{<:Any, <:Device}, data::ArmonData, range, dx, dy)
+    (; cmat, umat, vmat, domain_mask) = data
+    return @inbounds reduce(min, @views(
+        dtCFL_kernel_reduction.(umat[range], vmat[range], cmat[range], domain_mask[range], dx, dy)
+    ))
 end
 
 
@@ -572,29 +568,40 @@ function conservation_vars_kernel(params::ArmonParameters{T, CPU_HP}, data::Armo
     (; rho, Emat, domain_mask) = data
     (; dx) = params
 
-    ds = dx * dx
     @batch threadlocal=zeros(T, 2) for i in range
-        threadlocal[1] += rho[i] * ds           * domain_mask[i]  # mass
-        threadlocal[2] += rho[i] * ds * Emat[i] * domain_mask[i]  # energy
+        threadlocal[1] += rho[i]           * domain_mask[i]  # mass
+        threadlocal[2] += rho[i] * Emat[i] * domain_mask[i]  # energy
     end
 
     threadlocal  = sum(threadlocal)  # Reduce the result of each thread
-    total_mass   = threadlocal[1]
-    total_energy = threadlocal[2]
+
+    ds = dx * dx
+    total_mass   = threadlocal[1] * ds
+    total_energy = threadlocal[2] * ds
 
     return total_mass, total_energy
 end
 
 
-function conservation_vars_kernel(params::ArmonParameters{T, <:GPU}, data::ArmonData, range) where T
+@inline @fast function conservation_vars_kernel_reduction(rho::T, E::T, mask::T) where T
+    return (
+        rho * mask,     # Mass
+        rho * E * mask  # Energy
+    )
+end
+
+
+function conservation_vars_kernel(params::ArmonParameters{T, <:Device}, data::ArmonData, range) where T
     (; rho, Emat, domain_mask) = data
     (; dx) = params
 
+    total_mass, total_energy = @inbounds reduce(.+, @views(
+        conservation_vars_kernel_reduction.(rho[range], Emat[range], domain_mask[range])
+    ))
+
     ds = dx * dx
-    total_mass = @inbounds reduce(+, @views (
-        rho[range] .* domain_mask[range] .* ds))
-    total_energy = @inbounds reduce(+, @views (
-        rho[range] .* Emat[range] .* domain_mask[range] .* ds))
+    total_mass *= ds
+    total_energy *= ds
 
     return total_mass, total_energy
 end
