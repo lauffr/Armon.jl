@@ -496,7 +496,7 @@ end
 end
 
 
-function dtCFL_kernel(::ArmonParameters{<:Any, <:Device}, data::ArmonData, range, dx, dy)
+function dtCFL_kernel(::ArmonParameters{<:Any, <:GPU}, data::ArmonData, range, dx, dy)
     (; cmat, umat, vmat, domain_mask) = data
     return @inbounds reduce(min, @views(
         dtCFL_kernel_reduction.(umat[range], vmat[range], cmat[range], domain_mask[range], dx, dy)
@@ -591,7 +591,7 @@ end
 end
 
 
-function conservation_vars_kernel(params::ArmonParameters{T, <:Device}, data::ArmonData, range) where T
+function conservation_vars_kernel(params::ArmonParameters{T, <:GPU}, data::ArmonData, range) where T
     (; rho, Emat, domain_mask) = data
     (; dx) = params
 
