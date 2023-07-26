@@ -208,7 +208,7 @@ function Armon.copy_to_send_buffer!(data::ArmonDualData{D, H, <:Kokkos.Execution
     array::D, buffer::H
 ) where {D, H}
     array_data = Kokkos.subview(array, 1:length(buffer))
-    Kokkos.deep_copy(device_type(data), buffer, array_data)
+    Kokkos.deep_copy(Armon.device_type(data), buffer, array_data)
 end
 
 
@@ -216,7 +216,15 @@ function Armon.copy_from_recv_buffer!(data::ArmonDualData{D, H, <:Kokkos.Executi
     array::D, buffer::H
 ) where {D, H}
     array_data = Kokkos.subview(array, 1:length(buffer))
-    Kokkos.deep_copy(device_type(data), array_data, buffer)
+    Kokkos.deep_copy(Armon.device_type(data), array_data, buffer)
+end
+
+
+function Armon.get_send_comm_array(data::ArmonDualData{H, H, <:Kokkos.ExecutionSpace},
+    side::Side
+) where H
+    # Here only for method disambiguation
+    return Base.invoke(Armon.get_send_comm_array, Tuple{ArmonDualData{H, H, <:Any}, Side}, data, side)
 end
 
 
@@ -225,7 +233,7 @@ function Armon.get_send_comm_array(data::ArmonDualData{D, H, <:Kokkos.ExecutionS
 ) where {D, H}
     # Kokkos functions (like deep_copy, etc...) called on the comm array require an actual
     # Kokkos.View, not a view.
-    array_view = Base.invoke(Armon.get_send_comm_array, Tuple{ArmonDualData{D, H, Any}}, data, side)
+    array_view = Base.invoke(Armon.get_send_comm_array, Tuple{ArmonDualData{D, H, <:Any}, Side}, data, side)
     return Kokkos.subview(parent(array_view), parentindices(array_view))
 end
 
