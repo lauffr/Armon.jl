@@ -179,7 +179,7 @@ function boundaryConditions!(params::ArmonParameters, data::ArmonDualData, sides
         side = params.current_axis == X_axis ? Right : Top
         boundaryConditions!(params, data, (side,))
     else
-        error("Unknown sides: $sides")
+        solver_error(:config, "Unknown sides: $sides")
     end
 end
 

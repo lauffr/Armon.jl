@@ -359,10 +359,10 @@ function numericalFluxes!(
         elseif params.scheme == :GAD
             return acoustic_GAD!(params, d_data, range, dt, u, params.riemann_limiter)
         else
-            error("Unknown acoustic scheme: ", params.scheme)
+            solver_error(:config, "Unknown acoustic scheme: ", params.scheme)
         end
     else
-        error("Unknown Riemann solver: ", params.riemann)
+        solver_error(:config, "Unknown Riemann solver: ", params.riemann)
     end
 end
 
@@ -383,7 +383,7 @@ function numericalFluxes!(params::ArmonParameters, data::ArmonDualData, label::S
     elseif label == :test
         range = steps_ranges.real_domain
     else
-        error("Wrong region label: $label")
+        solver_error(:config, "Wrong region label: $label")
     end
 
     return numericalFluxes!(params, data, range, label)
@@ -417,7 +417,7 @@ function update_EOS!(params::ArmonParameters, data::ArmonDualData, label::Symbol
     elseif label == :test
         range = steps_ranges.real_domain
     else
-        error("Wrong region label: $label")
+        solver_error(:config, "Wrong region label: $label")
     end
 
     return update_EOS!(params, device(data), params.test, range)
@@ -463,7 +463,7 @@ function projection_remap!(params::ArmonParameters, data::ArmonDualData)
         second_order_euler_remap!(params, d_data, advection_range, params.cycle_dt,
             advection_ρ, advection_uρ, advection_vρ, advection_Eρ)
     else
-        error("Unknown projection scheme: $(params.projection)")
+        solver_error(:config, "Unknown projection scheme: $(params.projection)")
     end
 
     return @section "Projection" euler_projection!(params, d_data, projection_range, params.cycle_dt,
@@ -551,7 +551,7 @@ function time_step(params::ArmonParameters, data::ArmonDualData)
         end
 
         if (!isfinite(next_dt) || next_dt <= 0.)
-            is_root && error("Invalid time step for cycle $(params.cycle): $next_dt")
+            is_root && solver_error(:time, "Invalid time step for cycle $(params.cycle): $next_dt")
             return true
         end
 

@@ -14,7 +14,7 @@ limiter_from_name(::Val{:no_limiter}) = NoLimiter()
 limiter_from_name(::Val{:minmod})     = MinmodLimiter()
 limiter_from_name(::Val{:superbee})   = SuperbeeLimiter()
 
-limiter_from_name(::Val{s}) where s = error("Unknown limiter name: '$s'")
+limiter_from_name(::Val{s}) where s = solver_error(:config, "Unknown limiter name: '$s'")
 limiter_from_name(s::Symbol) = limiter_from_name(Val(s))
 
 Base.show(io::IO, ::NoLimiter)       = print(io, "No limiter")

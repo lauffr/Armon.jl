@@ -23,7 +23,7 @@ test_from_name(::Val{:Sod_circ})  = Sod_circ
 test_from_name(::Val{:Bizarrium}) = Bizarrium
 test_from_name(::Val{:Sedov})     = Sedov
 
-test_from_name(::Val{s}) where s = error("Unknown test case: '$s'")
+test_from_name(::Val{s}) where s = solver_error(:config, "Unknown test case: '$s'")
 test_from_name(s::Symbol) = test_from_name(Val(s))
 
 test_name(::Test) where {Test <: TestCase} = Test.name.name

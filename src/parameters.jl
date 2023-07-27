@@ -139,7 +139,7 @@ function ArmonParameters(;
     origin = isnothing(origin) ? nothing : Tuple(flt_type.(origin))
 
     if cst_dt && Dt == zero(flt_type)
-        error("Dt == 0 with constant step enabled")
+        solver_error(:config, "Dt == 0 with constant step enabled")
     end
 
     min_nghost = 1
@@ -147,15 +147,15 @@ function ArmonParameters(;
     min_nghost += (projection == :euler_2nd)
 
     if nghost < min_nghost
-        error("Not enough ghost cells for the scheme and/or projection, at least $min_nghost are needed.")
+        solver_error(:config, "Not enough ghost cells for the scheme and/or projection, at least $min_nghost are needed.")
     end
 
     if (nx % px != 0) || (ny % py != 0)
-        error("The dimensions of the global domain ($nx x $ny) are not divisible by the number of processors ($px x $py)")
+        solver_error(:config, "The dimensions of the global domain ($nx x $ny) are not divisible by the number of processors ($px x $py)")
     end
 
     if projection == :none
-        error("Lagrangian mode unsupported")
+        solver_error(:config, "Lagrangian mode unsupported")
     end
 
     if isnothing(stencil_width)
@@ -164,13 +164,13 @@ function ArmonParameters(;
         @warn "The detected minimum stencil width is $min_nghost, but $stencil_width was given. \
                The Boundary conditions might be false." maxlog=1
     elseif stencil_width > nghost
-        error("The stencil width given ($stencil_width) cannot be bigger than the number of ghost cells ($nghost)")
+        solver_error(:config, "The stencil width given ($stencil_width) cannot be bigger than the number of ghost cells ($nghost)")
     end
 
     if riemann_limiter isa Symbol
         riemann_limiter = limiter_from_name(riemann_limiter)
     elseif !(riemann_limiter isa Limiter)
-        error("Expected a Limiter type or a symbol, got: $riemann_limiter")
+        solver_error(:config, "Expected a Limiter type or a symbol, got: $riemann_limiter")
     end
 
     if test isa Symbol
@@ -179,11 +179,11 @@ function ArmonParameters(;
     elseif test isa TestCase
         test_type = typeof(test)
     else
-        error("Expected a TestCase type or a symbol, got: $test")
+        solver_error(:config, "Expected a TestCase type or a symbol, got: $test")
     end
 
     if compare && async_comms
-        error("Cannot compare when using asynchronous communications")
+        solver_error(:config, "Cannot compare when using asynchronous communications")
     end
 
     if async_comms && !use_gpu && !use_kokkos
@@ -198,7 +198,7 @@ function ArmonParameters(;
     # MPI
     global_comm = something(global_comm, MPI.COMM_WORLD)
     if use_MPI
-        !MPI.Initialized() && error("'use_MPI=true' but MPI has not yet been initialized")
+        !MPI.Initialized() && solver_error(:config, "'use_MPI=true' but MPI has not yet been initialized")
 
         rank = MPI.Comm_rank(global_comm)
         proc_size = MPI.Comm_size(global_comm)
@@ -251,7 +251,7 @@ function ArmonParameters(;
         kokkos_lib = nothing
     end
 
-    length(block_size) > 3 && error("Expected `block_size` to contain up to 3 elements, got: $block_size")
+    length(block_size) > 3 && solver_error(:config, "Expected `block_size` to contain up to 3 elements, got: $block_size")
     block_size = tuple(block_size..., ntuple(Returns(1), 3 - length(block_size))...)
 
     # Profiling
@@ -262,7 +262,7 @@ function ArmonParameters(;
     missing_prof = setdiff(profiling_info, (cb.name for cb in Armon.SECTION_PROFILING_CALLBACKS))
     setdiff!(missing_prof, (cb.name for cb in Armon.KERNEL_PROFILING_CALLBACKS))
     if !isempty(missing_prof)
-        error("Unknown profiler$(length(missing_prof) > 1 ? "s" : ""): " * join(missing_prof, ", "))
+        solver_error(:config, "Unknown profiler$(length(missing_prof) > 1 ? "s" : ""): " * join(missing_prof, ", "))
     end
 
     # Initialize the test
@@ -487,7 +487,7 @@ Base.show(io::IO, p::ArmonParameters) = print_parameters(io::IO, p::ArmonParamet
 
 
 function init_device(::Val{D}, _) where D
-    error("Unknown GPU device: $D")
+    solver_error(:config, "Unknown GPU device: $D")
 end
 
 
@@ -614,7 +614,7 @@ function split_axes(params::ArmonParameters{T}) where T
     elseif params.axis_splitting == :Y_only
         return [(Y_axis, T(1.0))]
     else
-        error("Unknown axes splitting method: $(params.axis_splitting)")
+        solver_error(:config, "Unknown axis splitting method: $(params.axis_splitting)")
     end
 end
 
@@ -656,7 +656,7 @@ function update_steps_ranges(params::ArmonParameters)
         extra_FLX += 1
         extra_UP  += 1
     else
-        error("Unknown scheme: $(params.projection)")
+        solver_error(:config, "Unknown scheme: $(params.projection)")
     end
 
     # Real domain
@@ -729,7 +729,7 @@ function boundary_conditions_indexes(params::ArmonParameters, side::Side)
         loop_range = 1:nx
         d = row_length
     else
-        error("Unknown side: $side")
+        solver_error(:config, "Unknown side: $side")
     end
 
     return i_start, loop_range, stride, d
