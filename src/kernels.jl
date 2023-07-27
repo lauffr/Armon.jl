@@ -597,7 +597,7 @@ function conservation_vars_kernel(params::ArmonParameters{T, <:GPU}, data::Armon
 
     total_mass, total_energy = @inbounds reduce(.+, @views(
         conservation_vars_kernel_reduction.(rho[range], Emat[range], domain_mask[range])
-    ))
+    ); init=(zero(T), zero(T)))
 
     ds = dx * dx
     total_mass *= ds
