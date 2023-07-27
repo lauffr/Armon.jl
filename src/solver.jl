@@ -39,7 +39,7 @@ function solver_cycle(params::ArmonParameters, data::ArmonDualData)
         params.curr_cycle_dt = params.next_cycle_dt
     end
 
-    for (axis, dt_factor) in split_axes(params)
+    @section "$axis" for (axis, dt_factor) in split_axes(params)
         update_axis_parameters(params, axis)
         update_steps_ranges(params)
         params.cycle_dt = params.curr_cycle_dt * dt_factor
@@ -81,8 +81,6 @@ function solver_cycle(params::ArmonParameters, data::ArmonDualData)
 
         @section "remap" projection_remap!(params, data)
         @checkpoint("projection_remap") && return true
-
-        end
     end
 
     return false

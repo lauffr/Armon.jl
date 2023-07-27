@@ -70,7 +70,7 @@ end
 
 function section(name, expr; force_async=false)
     @gensym section_state profiling_on section_name result
-    return esc(quote
+    return quote
         $profiling_on = params.enable_profiling
         if $profiling_on
             $section_name = Symbol($name)
@@ -94,24 +94,84 @@ function section(name, expr; force_async=false)
         end))
 
         $result
-    end)
-end
-
-
-macro section(name, expr)
-    return section(name, expr)
-end
-
-
-macro section(name, option, expr)
-    if !@capture(option, kw_ = val_)
-        error("Expected an expression of the form 'kw=val', got: $option")
     end
-    (kw !== :async) && error("Unknown option: $kw")
-    val = Core.eval(__module__, val)
-    return section(name, expr;
-        force_async=val
-    )
+end
+
+
+function section_for_loop(name, expr; force_async=false)
+    loop_body = expr.args[2]
+    expr.args[2] = section(name, loop_body; force_async)
+    return expr
+end
+
+
+"""
+    @section(name, expr)
+    @section(name, options, expr)
+
+Introduce a profiling section around `expr`. Sections can be nested. Sections do not introduce a new
+scope.
+
+Placed before a for-loop, a new section will be started for each iteration. `name` can interpolate
+using loop variables (like `Test.@testset`).
+
+It is assumed that a `params` variable of `ArmonParameters` is present in the scope of the `@section`.
+
+`options` is of the form `key=value`:
+ - `async` (default: `false`): if `async=false` (and `!params.time_async`), a barrier (`wait(params)`)
+   is added at the end of the section.
+
+```julia
+params = ArmonParameters(#= ... =#)
+
+@section "Iteration \$i" for i in 1:10
+    j = @section "Foo" begin
+        foo(i)
+    end
+
+    @section "Some calculation" begin
+        k = bar(i, j)
+    end
+
+    @sync begin
+        @async begin
+            @section "Task 1" async=true my_task_1(i, j, k)
+        end
+
+        @async begin
+            @section "Task 2" async=true my_task_2(i, j, k)
+        end
+    end
+end
+```
+"""
+macro section(args...)
+    2 ≤ length(args) ≤ 3 || error("invalid number of arguments to @section")
+
+    name = args[1]
+    expr = args[end]
+    option = length(args) == 3 ? args[2] : nothing
+
+    if !isnothing(option)
+        if !@capture(option, kw_ = val_)
+            error("Expected an expression of the form 'kw=val', got: $option")
+        end
+        (kw !== :async) && error("Unknown option: $kw")
+        val = Core.eval(__module__, val)
+        force_async = val
+    else
+        force_async = false
+    end
+
+    if !isa(expr, Expr)
+        error("expected expression or for-loop, got: $(type(expr))")
+    elseif expr.head == :for
+        expr = section_for_loop(name, expr; force_async)
+    else
+        expr = section(name, expr; force_async)
+    end
+
+    return esc(expr)
 end
 
 #
