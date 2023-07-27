@@ -186,6 +186,15 @@ function ArmonParameters(;
         error("Cannot compare when using asynchronous communications")
     end
 
+    if async_comms && !use_gpu && !use_kokkos
+        @warn "Asynchronous communications only work when using a GPU, or with a multithreading \
+               backend which supports tasking." maxlog=1
+    end
+
+    if async_comms && use_kokkos
+        @warn "Asynchronous communications with Kokkos NYI" maxlog=1
+    end
+
     # MPI
     global_comm = something(global_comm, MPI.COMM_WORLD)
     if use_MPI

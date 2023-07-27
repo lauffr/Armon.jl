@@ -288,8 +288,9 @@ function test_halo_exchange(px, py, proc_in_grid, global_comm)
 
         # "Halo exchange", but with one neighbour at a time
         comm_array = get_send_comm_array(data, side)
-        read_border_array!(ref_params, data, comm_array, side) |> wait
-        copy_to_send_buffer!(data, comm_array, side) |> wait
+        read_border_array!(ref_params, data, comm_array, side)
+        copy_to_send_buffer!(data, comm_array, side)
+        wait(ref_params)
 
         requests = data.requests[side]
         MPI.Start(requests.send)
@@ -299,8 +300,9 @@ function test_halo_exchange(px, py, proc_in_grid, global_comm)
         MPI.Wait(requests.recv)
 
         comm_array = get_recv_comm_array(data, side)
-        copy_from_recv_buffer!(data, comm_array, side) |> wait
-        write_border_array!(ref_params, data, comm_array, side) |> wait
+        copy_from_recv_buffer!(data, comm_array, side)
+        write_border_array!(ref_params, data, comm_array, side)
+        wait(ref_params)
 
         # Check if the received array was correctly pasted into our ghost domain
         g_domain = ghost_domain(ref_params, side)
@@ -356,7 +358,7 @@ total_proc_count = MPI.Comm_size(MPI.COMM_WORLD)
                     dt, cycles, data = run_armon_reference(ref_params)
                     ref_dt, ref_cycles, ref_data = ref_data_for_sub_domain(ref_params)
 
-                    @root_test dt ≈ ref_dt atol=abs_tol(type) rtol=rel_tol(type)
+                    @root_test dt ≈ ref_dt atol=abs_tol(type, ref_params.test) rtol=rel_tol(type, ref_params.test)
                     @root_test cycles == ref_cycles
 
                     diff_count, _ = count_differences(ref_params, host(data), ref_data)
@@ -383,7 +385,7 @@ total_proc_count = MPI.Comm_size(MPI.COMM_WORLD)
                     dt, cycles, data = run_armon_reference(ref_params)
                     ref_dt, ref_cycles, ref_data = ref_data_for_sub_domain(ref_params)
 
-                    @root_test dt ≈ ref_dt atol=abs_tol(type) rtol=rel_tol(type)
+                    @root_test dt ≈ ref_dt atol=abs_tol(type, ref_params.test) rtol=rel_tol(type, ref_params.test)
                     @root_test cycles == ref_cycles
 
                     diff_count, _ = count_differences(ref_params, host(data), ref_data)
@@ -436,7 +438,7 @@ total_proc_count = MPI.Comm_size(MPI.COMM_WORLD)
                     dt, cycles, data = run_armon_reference(ref_params)
                     ref_dt, ref_cycles, ref_data = ref_data_for_sub_domain(ref_params)
 
-                    @root_test dt ≈ ref_dt atol=abs_tol(type) rtol=rel_tol(type)
+                    @root_test dt ≈ ref_dt atol=abs_tol(type, ref_params.test) rtol=rel_tol(type, ref_params.test)
                     @root_test cycles == ref_cycles
 
                     diff_count, _ = count_differences(ref_params, host(data), ref_data)

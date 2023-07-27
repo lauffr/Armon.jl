@@ -44,31 +44,56 @@ function solver_cycle(params::ArmonParameters, data::ArmonDualData)
         update_steps_ranges(params)
         params.cycle_dt = params.curr_cycle_dt * dt_factor
 
-        @section "$axis" begin
+        @section "EOS" update_EOS!(params, data, :full)
+        @checkpoint("EOS") && return true
 
         if params.async_comms
-            @section "EOS lb" update_EOS!(params, data, :outer_lb)
-            @section "EOS rt" update_EOS!(params, data, :outer_rt)
+            #=
+            ┌───┬────┬───────────┬────┬───┐
+            │   │    │           │    │   │
+            │ G │ LB │   inner   │ RT │ G │
+            │   │    │           │    │   │
+            └───┴────┴───────────┴────┴───┘
 
-            channel = Channel{Task}(Inf)
+            - G: ghost cells
+            - LB: left (X axis pass) or bottom (Y axis pass) domain
+            - RT: right (X axis pass) or top (Y axis pass) domain
+            - inner: inner domain
 
-            # TODO: execute both BC while the fluxes are being calculated
-            @section "BC lb" async=true boundaryConditions!(params, data, :outer_lb, channel)
-            @section "BC rt" async=true boundaryConditions!(params, data, :outer_rt, channel)
+            Task graph:
+                     ┌──────────────────┐
+                   ┌─┤   Fluxes inner   ├─┐
+                   │ └──────────────────┘ │
+                   │                      │
+             ┌───┐ │ ┌─────┐  ┌─────────┐ │
+            ─┤EOS├─┼─┤BC LB├──┤Fluxes LB├─┼─
+             └───┘ │ └─────┘  └─────────┘ │
+                   │                      │
+                   │ ┌─────┐  ┌─────────┐ │
+                   └─┤BC RT├──┤Fluxes RT├─┘
+                     └─────┘  └─────────┘
+            =#
 
-            @section "EOS" async=true update_EOS!(params, data, :inner)
-            @section "fluxes" async=true numericalFluxes!(params, data, :inner)
+            wait(params)
 
-            # TODO: more async logic between outer domains
+            @sync begin
+                @async begin
+                    @section "BC lb"     async=true boundaryConditions!(params, data, :outer_lb)
+                    @section "fluxes lb" async=true numericalFluxes!(params, data, :outer_lb)
+                end
 
-            @section "fluxes lb" async=true numericalFluxes!(params, data, :outer_lb)
-            @section "fluxes rt" async=true numericalFluxes!(params, data, :outer_rt)
+                @async begin
+                    @section "BC rt"     async=true boundaryConditions!(params, data, :outer_rt)
+                    @section "fluxes rt" async=true numericalFluxes!(params, data, :outer_rt)
+                end
 
-            # TODO: async cellUpdate?
+                @async begin
+                    @section "fluxes"    async=true numericalFluxes!(params, data, :inner)
+                end
+            end
+
+            @checkpoint("numericalFluxes") && return true
         else
-            @section "EOS" update_EOS!(params, data, :full)
-            @checkpoint("EOS") && return true
-
             @section "BC" boundaryConditions!(params, data)
             @checkpoint("boundaryConditions") && return true
 

@@ -22,6 +22,16 @@
 end
 
 
+function boundaryConditions!(params::ArmonParameters{T}, data::ArmonDualData, side::Side) where T
+    (u_factor::T, v_factor::T) = boundaryCondition(side, params.test)
+    (i_start, loop_range, stride, d) = boundary_conditions_indexes(params, side)
+
+    i_start -= stride  # Adjust for the fact that `@index_1D_lin()` is 1-indexed
+
+    boundaryConditions!(params, device(data), loop_range, stride, i_start, d, u_factor, v_factor)
+end
+
+
 @generic_kernel function read_border_array!(
     side_length::Int, nghost::Int,
     rho::V, umat::V, vmat::V, pmat::V, cmat::V, gmat::V, Emat::V, value_array::V
@@ -96,8 +106,7 @@ function copy_buffer_to_border_array!(params::ArmonParameters, data::ArmonDualDa
 end
 
 
-function request_task(dependency, request)
-    wait(dependency)
+function request_task(request)
     MPI.Start(request)
     done = false
     while !done
@@ -107,63 +116,37 @@ function request_task(dependency, request)
 end
 
 
-function boundaryConditions!(params::ArmonParameters{T}, data::ArmonDualData, side::Side, channel) where T
-    if !has_neighbour(params, side)
-        # No neighbour: global domain boundary conditions
-        (u_factor::T, v_factor::T) = boundaryCondition(side, params.test)
-        (i_start, loop_range, stride, d) = boundary_conditions_indexes(params, side)
+function halo_exchange!(params::ArmonParameters, data::ArmonDualData, side::Side)
+    # Exchange with the neighbour the cells on the side
+    copy_border_array_to_buffer!(params, data, side)
 
-        i_start -= stride  # Adjust for the fact that `@index_1D_lin()` is 1-indexed
+    # If `params.async_comms == true`, then communications are done in a separate task,
+    # therefore all waits apply only to the task's stream.
+    wait(params)  # Wait for the copy to complete
 
-        boundaryConditions!(params, device(data), loop_range, stride, i_start, d, u_factor, v_factor)
-    else
-        # Exchange with the neighbour the cells on the side
-        copy_border_array_to_buffer!(params, data, side)
+    send_request = data.requests[side].send
+    recv_request = data.requests[side].recv
 
-        send_request = data.requests[side].send
-        recv_request = data.requests[side].recv
-
-        if params.async_comms
-            # Schedule the asynchronous exchange to start when the copy is done
-            error("MPI async comms NYI")
-
-            copy_done = Threads.Event()
-            # TODO: notify(copy_done)  =>  in the copy task
-            # TODO: wait for the copy to be done
-
-            send_task = Threads.@spawn request_task(copy_done, send_request)
-            recv_task = Threads.@spawn request_task(copy_done, recv_request)
-
-            put!(channel, send_task)
-            put!(channel, recv_task)
-
-            copy_recv_task = Threads.@spawn begin
-                wait(recv_task)
-                # TODO: wait that the inner domain has been updated first (EOS)
-                copy_buffer_to_border_array!(params, data, side)
-            end
-
-            put!(channel, copy_recv_task)
-        else
-            # Launch the communications and wait for their completion now in order to be able to 
-            # measure them. 
-            wait(params)
-
-            @section "MPI" begin
-                MPI.Start(send_request)
-                MPI.Start(recv_request)
-
-                MPI.Wait(send_request)
-                MPI.Wait(recv_request)
-            end
-
-            copy_buffer_to_border_array!(params, data, side)
+    # TODO: if the @sync @async does not introduce too much latency, keep it and remove the other branch
+    @section "MPI" if params.async_comms
+        # Wait in coordination with Julia's scheduler
+        @sync begin
+            @async request_task(send_request)
+            @async request_task(recv_request)
         end
+    else
+        MPI.Start(send_request)
+        MPI.Start(recv_request)
+
+        MPI.Wait(send_request)
+        MPI.Wait(recv_request)
     end
+
+    copy_buffer_to_border_array!(params, data, side)
 end
 
 
-function boundaryConditions!(params::ArmonParameters, data::ArmonDualData, sides::Tuple{Vararg{Side}}, channel)
+function boundaryConditions!(params::ArmonParameters, data::ArmonDualData, sides::Tuple{Vararg{Side}})
     # TODO : use active RMA instead? => maybe but it will (maybe) not work with GPUs: 
     #   https://www.open-mpi.org/faq/?category=runcuda
     # TODO : use CUDA/ROCM-aware MPI
@@ -178,19 +161,23 @@ function boundaryConditions!(params::ArmonParameters, data::ArmonDualData, sides
         end
     end
 
-    for side in sides
-        boundaryConditions!(params, data, side, channel)
+    for side in sides 
+        if has_neighbour(params, side)
+            halo_exchange!(params, data, side)
+        else
+            boundaryConditions!(params, data, side)
+        end
     end
 end
 
 
-function boundaryConditions!(params::ArmonParameters, data::ArmonDualData, sides::Symbol, channel)
+function boundaryConditions!(params::ArmonParameters, data::ArmonDualData, sides::Symbol)
     if sides === :outer_lb
         side = params.current_axis == X_axis ? Left : Bottom
-        boundaryConditions!(params, data, (side,), channel)
+        boundaryConditions!(params, data, (side,))
     elseif sides === :outer_rt
         side = params.current_axis == X_axis ? Right : Top
-        boundaryConditions!(params, data, (side,), channel)
+        boundaryConditions!(params, data, (side,))
     else
         error("Unknown sides: $sides")
     end
@@ -198,5 +185,5 @@ end
 
 
 function boundaryConditions!(params::ArmonParameters, data::ArmonDualData)
-    boundaryConditions!(params, data, sides_along(params.current_axis), nothing)
+    boundaryConditions!(params, data, sides_along(params.current_axis))
 end
