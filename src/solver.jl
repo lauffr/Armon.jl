@@ -72,6 +72,9 @@ function solver_cycle(params::ArmonParameters, data::ArmonDualData)
                    │ ┌─────┐  ┌─────────┐ │
                    └─┤BC RT├──┤Fluxes RT├─┘
                      └─────┘  └─────────┘
+
+            TODO: allow async EOS by computing inner cells EOS variables in `Fluxes LB/RT` and outer
+              cells EOS variables in `Fluxes inner`, breaking the mutual dependencies of those tasks
             =#
 
             wait(params)
@@ -80,15 +83,18 @@ function solver_cycle(params::ArmonParameters, data::ArmonDualData)
                 @async begin
                     @section "BC lb"     async=true boundaryConditions!(params, data, :outer_lb)
                     @section "fluxes lb" async=true numericalFluxes!(params, data, :outer_lb)
+                    wait(params)  # We must wait for the CUDA/HIP stream to end before ending any task
                 end
 
                 @async begin
                     @section "BC rt"     async=true boundaryConditions!(params, data, :outer_rt)
                     @section "fluxes rt" async=true numericalFluxes!(params, data, :outer_rt)
+                    wait(params)
                 end
 
                 @async begin
                     @section "fluxes"    async=true numericalFluxes!(params, data, :inner)
+                    wait(params)
                 end
             end
 
