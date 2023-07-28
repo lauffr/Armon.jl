@@ -1,5 +1,5 @@
 
-import Armon: @generic_kernel, @threads, @batch, @kernel, @index
+import Armon: @generic_kernel, @threads, @batch, @kernel, @index, @fast
 import Armon: KernelWithThreading, KernelWithoutThreading, KernelWithSIMD, KernelWithoutSIMD
 
 

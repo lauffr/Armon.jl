@@ -211,41 +211,33 @@ end
 
 
 # In homogenous configurations, the data is already in the send buffer because of `get_send_comm_array` and `get_recv_comm_array`
-copy_to_send_buffer!(::ArmonDualData{H, H}, ::H, ::Side; dependencies=NoneEvent()) where H = dependencies
-copy_to_send_buffer!(::ArmonDualData{H, H}, ::H, ::H; dependencies=NoneEvent()) where H = dependencies
-copy_from_recv_buffer!(::ArmonDualData{H, H}, ::H, ::Side; dependencies=NoneEvent()) where H = dependencies
-copy_from_recv_buffer!(::ArmonDualData{H, H}, ::H, ::H; dependencies=NoneEvent()) where H = dependencies
+copy_to_send_buffer!(::ArmonDualData{H, H},   ::H, ::Side) where H = nothing
+copy_to_send_buffer!(::ArmonDualData{H, H},   ::H, ::H)    where H = nothing
+copy_from_recv_buffer!(::ArmonDualData{H, H}, ::H, ::Side) where H = nothing
+copy_from_recv_buffer!(::ArmonDualData{H, H}, ::H, ::H)    where H = nothing
 
 
-function copy_to_send_buffer!(data::ArmonDualData{D, H}, array::D, side::Side; 
-        dependencies=NoneEvent()) where {D, H}
+function copy_to_send_buffer!(data::ArmonDualData{D, H}, array::D, side::Side) where {D, H}
     buffer_data = send_buffer(data, side).data
-    copy_to_send_buffer!(data, array, buffer_data; dependencies)
+    copy_to_send_buffer!(data, array, buffer_data)
 end
 
 
-function copy_to_send_buffer!(data::ArmonDualData{D, H}, array::D, buffer::H;
-    dependencies=NoneEvent()
-) where {D, H}
+function copy_to_send_buffer!(data::ArmonDualData{D, H}, array::D, buffer::H) where {D, H}
     array_data = view(array, 1:length(buffer))
-    wait(dependencies)  # We cannot wait for CPU events on the GPU
-    return async_copy!(device_type(data), buffer, array_data)
+    KernelAbstractions.copyto!(device_type(data), buffer, array_data)
 end
 
 
-function copy_from_recv_buffer!(data::ArmonDualData{D, H}, array::D, side::Side;
-        dependencies=NoneEvent()) where {D, H}
+function copy_from_recv_buffer!(data::ArmonDualData{D, H}, array::D, side::Side) where {D, H}
     buffer_data = recv_buffer(data, side).data
-    copy_from_recv_buffer!(data, array, buffer_data; dependencies)
+    copy_from_recv_buffer!(data, array, buffer_data)
 end
 
 
-function copy_from_recv_buffer!(data::ArmonDualData{D, H}, array::D, buffer::H;
-    dependencies=NoneEvent()
-) where {D, H}
+function copy_from_recv_buffer!(data::ArmonDualData{D, H}, array::D, buffer::H) where {D, H}
     array_data = view(array, 1:length(buffer))
-    wait(dependencies)  # We cannot wait for CPU events on the GPU
-    return async_copy!(device_type(data), array_data, buffer)
+    KernelAbstractions.copyto!(device_type(data), array_data, buffer)
 end
 
 

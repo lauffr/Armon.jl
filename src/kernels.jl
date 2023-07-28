@@ -1,5 +1,5 @@
 
-function acoustic_Godunov(ρᵢ::T, ρᵢ₋₁::T, cᵢ::T, cᵢ₋₁::T, uᵢ::T, uᵢ₋₁::T, pᵢ::T, pᵢ₋₁::T) where T
+@kernel_function function acoustic_Godunov(ρᵢ::T, ρᵢ₋₁::T, cᵢ::T, cᵢ₋₁::T, uᵢ::T, uᵢ₋₁::T, pᵢ::T, pᵢ₋₁::T) where T
     rc_l = ρᵢ₋₁ * cᵢ₋₁
     rc_r = ρᵢ   * cᵢ
     ustarᵢ = (rc_l * uᵢ₋₁ + rc_r * uᵢ +               (pᵢ₋₁ - pᵢ)) / (rc_l + rc_r)
@@ -27,6 +27,69 @@ end
 ) where {T, V <: AbstractArray{T}, LimiterType <: Limiter}
     i = @index_2D_lin()
 
+#=
+    ρᵢ₋₂ₛ = rho[i-2s]
+    ρᵢ₋ₛ  = rho[i-s]
+    ρᵢ    = rho[i]
+    ρᵢ₊ₛ  = rho[i+s]
+
+    cᵢ₋₂ₛ = cmat[i-2s]
+    cᵢ₋ₛ  = cmat[i-s]
+    cᵢ    = cmat[i]
+    cᵢ₊ₛ  = cmat[i+s]
+
+    uᵢ₋₂ₛ = u[i-2s]
+    uᵢ₋ₛ  = u[i-s]
+    uᵢ    = u[i]
+    uᵢ₊ₛ  = u[i+s]
+
+    pᵢ₋₂ₛ = pmat[i-2s]
+    pᵢ₋ₛ  = pmat[i-s]
+    pᵢ    = pmat[i]
+    pᵢ₊ₛ  = pmat[i+s]
+
+    # First order acoustic solver on the left cell
+    ustar_i₋, pstar_i₋ = acoustic_Godunov(
+        ρᵢ₋ₛ, ρᵢ₋₂ₛ, cᵢ₋ₛ, cᵢ₋₂ₛ,
+        uᵢ₋ₛ, uᵢ₋₂ₛ, pᵢ₋ₛ, pᵢ₋₂ₛ
+    )
+
+    # First order acoustic solver on the current cell
+    ustar_i, pstar_i = acoustic_Godunov(
+        ρᵢ, ρᵢ₋ₛ, cᵢ, cᵢ₋ₛ,
+        uᵢ, uᵢ₋ₛ, pᵢ, pᵢ₋ₛ
+    )
+
+    # First order acoustic solver on the right cell
+    ustar_i₊, pstar_i₊ = acoustic_Godunov(
+        ρᵢ₊ₛ, ρᵢ, cᵢ₊ₛ, cᵢ,
+        uᵢ₊ₛ, uᵢ, pᵢ₊ₛ, pᵢpara
+    )
+
+    # Second order GAD acoustic solver on the current cell
+
+    r_u₋ = (ustar_i₊ - uᵢ) / (ustar_i - uᵢ₋ₛ + T(1e-6))
+    r_p₋ = (pstar_i₊ - pᵢ) / (pstar_i - pᵢ₋ₛ + T(1e-6))
+    r_u₊ = (uᵢ₋ₛ - ustar_i₋) / (uᵢ - ustar_i + T(1e-6))
+    r_p₊ = (pᵢ₋ₛ - pstar_i₋) / (pᵢ - pstar_i + T(1e-6))
+
+    r_u₋ = limiter(r_u₋, LimiterType())
+    r_p₋ = limiter(r_p₋, LimiterType())
+    r_u₊ = limiter(r_u₊, LimiterType())
+    r_p₊ = limiter(r_p₊, LimiterType())
+
+    dm_l = ρᵢ₋ₛ * dx
+    dm_r = ρᵢ   * dx
+    Dm   = (dm_l + dm_r) / 2
+
+    rc_l = ρᵢ₋ₛ * cᵢ₋ₛ
+    rc_r = ρᵢ   * cᵢ
+    θ    = T(0.5) * (1 - (rc_l + rc_r) / 2 * (dt / Dm))
+
+    ustar[i] = ustar_i + θ * (r_u₊ * (uᵢ - ustar_i) - r_u₋ * (ustar_i - uᵢ₋ₛ))
+    pstar[i] = pstar_i + θ * (r_p₊ * (pᵢ - pstar_i) - r_p₋ * (pstar_i - pᵢ₋ₛ))
+=#
+
     # First order acoustic solver on the left cell
     ustar_i₋, pstar_i₋ = acoustic_Godunov(
         rho[i-s], rho[i-2s], cmat[i-s], cmat[i-2s],
@@ -47,10 +110,10 @@ end
 
     # Second order GAD acoustic solver on the current cell
 
-    r_u₋ = (ustar_i₊ -      u[i]) / (ustar_i -    u[i-s] + 1e-6)
-    r_p₋ = (pstar_i₊ -   pmat[i]) / (pstar_i - pmat[i-s] + 1e-6)
-    r_u₊ = (   u[i-s] - ustar_i₋) / (   u[i] -   ustar_i + 1e-6)
-    r_p₊ = (pmat[i-s] - pstar_i₋) / (pmat[i] -   pstar_i + 1e-6)
+    r_u₋ = (ustar_i₊ -      u[i]) / (ustar_i -    u[i-s] + T(1e-6))
+    r_p₋ = (pstar_i₊ -   pmat[i]) / (pstar_i - pmat[i-s] + T(1e-6))
+    r_u₊ = (   u[i-s] - ustar_i₋) / (   u[i] -   ustar_i + T(1e-6))
+    r_p₊ = (pmat[i-s] - pstar_i₋) / (pmat[i] -   pstar_i + T(1e-6))
 
     r_u₋ = limiter(r_u₋, LimiterType())
     r_p₋ = limiter(r_p₋, LimiterType())
@@ -63,8 +126,8 @@ end
 
     rc_l = rho[i-s] * cmat[i-s]
     rc_r = rho[i]   * cmat[i]
-    θ    = 1/2 * (1 - (rc_l + rc_r) / 2 * (dt / Dm))
-    
+    θ    = T(0.5) * (1 - (rc_l + rc_r) / 2 * (dt / Dm))
+
     ustar[i] = ustar_i + θ * (r_u₊ * (   u[i] - ustar_i) - r_u₋ * (ustar_i -    u[i-s]))
     pstar[i] = pstar_i + θ * (r_p₊ * (pmat[i] - pstar_i) - r_p₋ * (pstar_i - pmat[i-s]))
 end
@@ -280,54 +343,31 @@ end
 end
 
 #
-# GPU-only Kernels
-#
-
-@kernel function gpu_dtCFL_reduction_euler_kernel!(dx, dy, out, umat, vmat, cmat, domain_mask)
-    i = @index(Global)
-
-    c = cmat[i]
-    u = umat[i]
-    v = vmat[i]
-    mask = domain_mask[i]
-
-    dt_x = dx / abs(max(abs(u + c), abs(u - c)) * mask)
-    dt_y = dy / abs(max(abs(v + c), abs(v - c)) * mask)
-    out[i] = min(dt_x, dt_y)
-end
-
-#
 # Wrappers
 #
 
 function numericalFluxes!(
     params::ArmonParameters, data::ArmonDualData, 
-    range::DomainRange, label::Symbol;
-    dependencies=NoneEvent()
+    range::DomainRange, label::Symbol
 )
     dt = params.cycle_dt
     d_data = device(data)
     u = params.current_axis == X_axis ? d_data.umat : d_data.vmat
     if params.riemann == :acoustic  # 2-state acoustic solver (Godunov)
         if params.scheme == :Godunov
-            return acoustic!(params, d_data, range, d_data.ustar, d_data.pstar, u; 
-                dependencies)
+            return acoustic!(params, d_data, range, d_data.ustar, d_data.pstar, u)
         elseif params.scheme == :GAD
-            return acoustic_GAD!(params, d_data, range, dt, u, params.riemann_limiter; 
-                dependencies)
+            return acoustic_GAD!(params, d_data, range, dt, u, params.riemann_limiter)
         else
-            error("Unknown acoustic scheme: ", params.scheme)
+            solver_error(:config, "Unknown acoustic scheme: ", params.scheme)
         end
     else
-        error("Unknown Riemann solver: ", params.riemann)
+        solver_error(:config, "Unknown Riemann solver: ", params.riemann)
     end
 end
 
 
-function numericalFluxes!(
-    params::ArmonParameters, data::ArmonDualData, label::Symbol;
-    dependencies=NoneEvent()
-)
+function numericalFluxes!(params::ArmonParameters, data::ArmonDualData, label::Symbol)
     (; steps_ranges) = params
 
     if label == :inner
@@ -343,34 +383,25 @@ function numericalFluxes!(
     elseif label == :test
         range = steps_ranges.real_domain
     else
-        error("Wrong region label: $label")
+        solver_error(:config, "Wrong region label: $label")
     end
 
-    return numericalFluxes!(params, data, range, label; dependencies)
+    return numericalFluxes!(params, data, range, label)
 end
 
 
-function update_EOS!(
-    params::ArmonParameters{T}, data::ArmonData, ::TestCase, range::DomainRange;
-    dependencies
-) where T
-    gamma::T = 7/5
-    return update_perfect_gas_EOS!(params, data, range, gamma; dependencies)
+function update_EOS!(params::ArmonParameters, data::ArmonData, ::TestCase, range::DomainRange)
+    gamma = data_type(params)(7/5)
+    return update_perfect_gas_EOS!(params, data, range, gamma)
 end
 
 
-function update_EOS!(
-    params::ArmonParameters, data::ArmonData, ::Bizarrium, range::DomainRange;
-    dependencies
-)
-    return update_bizarrium_EOS!(params, data, range; dependencies)
+function update_EOS!(params::ArmonParameters, data::ArmonData, ::Bizarrium, range::DomainRange)
+    return update_bizarrium_EOS!(params, data, range)
 end
 
 
-function update_EOS!(
-    params::ArmonParameters, data::ArmonDualData, label::Symbol;
-    dependencies=NoneEvent()
-)
+function update_EOS!(params::ArmonParameters, data::ArmonDualData, label::Symbol)
     (; steps_ranges) = params
 
     if label == :inner
@@ -386,10 +417,10 @@ function update_EOS!(
     elseif label == :test
         range = steps_ranges.real_domain
     else
-        error("Wrong region label: $label")
+        solver_error(:config, "Wrong region label: $label")
     end
 
-    return update_EOS!(params, device(data), params.test, range; dependencies)
+    return update_EOS!(params, device(data), params.test, range)
 end
 
 
@@ -398,15 +429,15 @@ function init_test(params::ArmonParameters, data::ArmonDualData)
 end
 
 
-function cellUpdate!(params::ArmonParameters, data::ArmonDualData; dependencies=NoneEvent())
+function cellUpdate!(params::ArmonParameters, data::ArmonDualData)
     range = params.steps_ranges.cell_update
     d_data = device(data)
     u = params.current_axis == X_axis ? d_data.umat : d_data.vmat
-    return cell_update!(params, d_data, range, params.cycle_dt, u; dependencies)
+    return cell_update!(params, d_data, range, params.cycle_dt, u)
 end
 
 
-function slope_minmod(uᵢ₋::T, uᵢ::T, uᵢ₊::T, r₋::T, r₊::T) where T
+@kernel_function function slope_minmod(uᵢ₋::T, uᵢ::T, uᵢ₊::T, r₋::T, r₊::T) where T
     Δu₊ = r₊ * (uᵢ₊ - uᵢ )
     Δu₋ = r₋ * (uᵢ  - uᵢ₋)
     s = sign(Δu₊)
@@ -414,7 +445,7 @@ function slope_minmod(uᵢ₋::T, uᵢ::T, uᵢ₊::T, r₋::T, r₊::T) where T
 end
 
 
-function projection_remap!(params::ArmonParameters, data::ArmonDualData; dependencies=NoneEvent())
+function projection_remap!(params::ArmonParameters, data::ArmonDualData)
     d_data = device(data)
     (; work_array_1, work_array_2, work_array_3, work_array_4) = d_data
     advection_ρ  = work_array_1
@@ -425,18 +456,18 @@ function projection_remap!(params::ArmonParameters, data::ArmonDualData; depende
     advection_range = params.steps_ranges.advection
     projection_range = params.steps_ranges.projection
 
-    @timeit params.timer "Advection" if params.projection == :euler
-        event = first_order_euler_remap!(params, d_data, advection_range, params.cycle_dt,
-            advection_ρ, advection_uρ, advection_vρ, advection_Eρ; dependencies)
+    @section "Advection" if params.projection == :euler
+        first_order_euler_remap!(params, d_data, advection_range, params.cycle_dt,
+            advection_ρ, advection_uρ, advection_vρ, advection_Eρ)
     elseif params.projection == :euler_2nd
-        event = second_order_euler_remap!(params, d_data, advection_range, params.cycle_dt,
-            advection_ρ, advection_uρ, advection_vρ, advection_Eρ; dependencies)
+        second_order_euler_remap!(params, d_data, advection_range, params.cycle_dt,
+            advection_ρ, advection_uρ, advection_vρ, advection_Eρ)
     else
-        error("Unknown projection scheme: $(params.projection)")
+        solver_error(:config, "Unknown projection scheme: $(params.projection)")
     end
 
-    return @timeit params.timer "Projection" euler_projection!(params, d_data, projection_range, params.cycle_dt,
-        advection_ρ, advection_uρ, advection_vρ, advection_Eρ; dependencies=event)
+    return @section "Projection" euler_projection!(params, d_data, projection_range, params.cycle_dt,
+        advection_ρ, advection_uρ, advection_vρ, advection_Eρ)
 end
 
 
@@ -453,33 +484,30 @@ function dtCFL_kernel(::ArmonParameters{T, CPU_HP}, data::ArmonData, range, dx, 
 end
 
 
-function dtCFL_kernel(::ArmonParameters{<:Any, <:Device}, data::ArmonData, range, dx, dy)
-    (; cmat, umat, vmat, domain_mask) = data
-
+@inline @fast function dtCFL_kernel_reduction(u::T, v::T, c::T, mask::T, dx::T, dy::T) where T
     # We need the absolute value of the divisor since the result of the max can be negative,
     # because of some IEEE 754 non-compliance since fast math is enabled when compiling this code
     # for GPU, e.g.: `@fastmath max(-0., 0.) == -0.`, while `max(-0., 0.) == 0.`
     # If the mask is 0, then: `dx / -0.0 == -Inf`, which will then make the result incorrect.
-    dt_x = @inbounds reduce(min, @views (dx ./ abs.(
-        max.(
-            abs.(umat[range] .+ cmat[range]), 
-            abs.(umat[range] .- cmat[range])
-        ) .* domain_mask[range])))
-    dt_y = @inbounds reduce(min, @views (dy ./ abs.(
-        max.(
-            abs.(vmat[range] .+ cmat[range]), 
-            abs.(vmat[range] .- cmat[range])
-        ) .* domain_mask[range])))
+    return min(
+        dx / abs(max(abs(u + c), abs(u - c)) * mask),
+        dy / abs(max(abs(v + c), abs(v - c)) * mask)
+    )
+end
 
-    return min(dt_x, dt_y)
+
+function dtCFL_kernel(::ArmonParameters{<:Any, <:GPU}, data::ArmonData, range, dx, dy)
+    (; cmat, umat, vmat, domain_mask) = data
+    return @inbounds reduce(min, @views(
+        dtCFL_kernel_reduction.(umat[range], vmat[range], cmat[range], domain_mask[range], dx, dy)
+    ))
 end
 
 
 function local_time_step(
     params::ArmonParameters{T}, data::ArmonData{V}, prev_dt::T;
-    dependencies=NoneEvent()
 ) where {T, V <: AbstractArray{T}}
-    (; cfl, Dt, ideb, ifin, global_grid, domain_size) = params
+    (; cfl, ideb, ifin, global_grid, domain_size) = params
     @indexing_vars(params)
 
     (g_nx, g_ny) = global_grid
@@ -487,12 +515,6 @@ function local_time_step(
     dx::T = sx / g_nx
     dy::T = sy / g_ny
 
-    if params.cst_dt
-        # Constant time step
-        return Dt
-    end
-
-    wait(dependencies)
     dt = dtCFL_kernel(params, data, ideb:ifin, dx, dy)
 
     if !isfinite(dt) || dt ≤ 0
@@ -506,7 +528,7 @@ function local_time_step(
 end
 
 
-function time_step(params::ArmonParameters, data::ArmonDualData; dependencies=NoneEvent())
+function time_step(params::ArmonParameters, data::ArmonDualData)
     (; Dt, dt_on_even_cycles, cycle, cst_dt, is_root, cart_comm) = params
 
     params.curr_cycle_dt = params.next_cycle_dt
@@ -514,12 +536,12 @@ function time_step(params::ArmonParameters, data::ArmonDualData; dependencies=No
     if cst_dt
         params.next_cycle_dt = Dt
     elseif !dt_on_even_cycles || iseven(cycle) || params.curr_cycle_dt == 0
-        @timeit params.timer "local_time_step" begin
-            local_dt = local_time_step(params, device(data), params.curr_cycle_dt; dependencies)
+        @section "local_time_step" begin
+            local_dt = local_time_step(params, device(data), params.curr_cycle_dt)
         end
 
         if params.use_MPI
-            @timeit params.timer "time_step Allreduce" begin
+            @section "time_step Allreduce" begin
                 # TODO: use a non-blocking IAllreduce, which would then be probed at the end of a cycle
                 #  however, we need to implement IAllreduce ourselves, since MPI.jl doesn't have a nice API for it (make a PR?)
                 next_dt = MPI.Allreduce(local_dt, MPI.Op(min, data_type(params)), cart_comm)
@@ -529,7 +551,7 @@ function time_step(params::ArmonParameters, data::ArmonDualData; dependencies=No
         end
 
         if (!isfinite(next_dt) || next_dt <= 0.)
-            is_root && error("Invalid time step for cycle $(params.cycle): $next_dt")
+            is_root && solver_error(:time, "Invalid time step for cycle $(params.cycle): $next_dt")
             return true
         end
 
@@ -546,29 +568,40 @@ function conservation_vars_kernel(params::ArmonParameters{T, CPU_HP}, data::Armo
     (; rho, Emat, domain_mask) = data
     (; dx) = params
 
-    ds = dx * dx
     @batch threadlocal=zeros(T, 2) for i in range
-        threadlocal[1] += rho[i] * ds           * domain_mask[i]  # mass
-        threadlocal[2] += rho[i] * ds * Emat[i] * domain_mask[i]  # energy
+        threadlocal[1] += rho[i]           * domain_mask[i]  # mass
+        threadlocal[2] += rho[i] * Emat[i] * domain_mask[i]  # energy
     end
 
     threadlocal  = sum(threadlocal)  # Reduce the result of each thread
-    total_mass   = threadlocal[1]
-    total_energy = threadlocal[2]
+
+    ds = dx * dx
+    total_mass   = threadlocal[1] * ds
+    total_energy = threadlocal[2] * ds
 
     return total_mass, total_energy
 end
 
 
-function conservation_vars_kernel(params::ArmonParameters{T, <:Device}, data::ArmonData, range) where T
+@inline @fast function conservation_vars_kernel_reduction(rho::T, E::T, mask::T) where T
+    return (
+        rho * mask,     # Mass
+        rho * E * mask  # Energy
+    )
+end
+
+
+function conservation_vars_kernel(params::ArmonParameters{T, <:GPU}, data::ArmonData, range) where T
     (; rho, Emat, domain_mask) = data
     (; dx) = params
 
+    total_mass, total_energy = @inbounds reduce(.+, @views(
+        conservation_vars_kernel_reduction.(rho[range], Emat[range], domain_mask[range])
+    ); init=(zero(T), zero(T)))
+
     ds = dx * dx
-    total_mass = @inbounds reduce(+, @views (
-        rho[range] .* domain_mask[range] .* ds))
-    total_energy = @inbounds reduce(+, @views (
-        rho[range] .* Emat[range] .* domain_mask[range] .* ds))
+    total_mass *= ds
+    total_energy *= ds
 
     return total_mass, total_energy
 end

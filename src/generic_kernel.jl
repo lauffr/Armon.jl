@@ -1,5 +1,8 @@
 
 const use_std_lib_threads = parse(Bool, get(ENV, "USE_STD_LIB_THREADS", "false"))
+const use_fast_math = parse(Bool, get(ENV, "ARMON_USE_FAST_MATH", "true"))
+const use_inbounds = parse(Bool, get(ENV, "ARMON_USE_INBOUNDS", "true"))
+
 
 """
 Controls which multi-threading library to use.
@@ -14,6 +17,22 @@ macro threads(expr)
             @batch $(expr)
         end)
     end
+end
+
+
+macro fast(expr)
+    expr = use_fast_math ? :(@fastmath $expr) : expr
+    expr = use_inbounds  ? :(@inbounds $expr) : expr
+    return esc(expr)
+end
+
+
+# TODO: check if all function calls (excluding Base, Core, CUDA, AMDGPU, KA...) in a kernel are for
+#  functions annotated with @kernel_function
+macro kernel_function(func)
+    func = :(@inline $func)
+    func = use_fast_math ? :(@fastmath $func) : func
+    return esc(func)
 end
 
 
@@ -439,6 +458,10 @@ function kernel_body_pass!(body::Expr, indexing_replacements::Dict{Symbol, Expr}
         return unblock(indexing_replacements[stmt_indexing_type])
     end
 
+    new_body = quote
+        @fast $new_body
+    end
+
     return new_body, init_expr, indexing_type, used_indexing_types, options_list_to_dict(options)
 end
 
@@ -631,6 +654,8 @@ function transform_kernel(func::Expr)
         @generated $(combinedef(kokkos_def))
     end
 
+    setup_kokkos_call = Expr(:block)
+
     # -- GPU --
 
     gpu_def = deepcopy(def)
@@ -691,12 +716,17 @@ function transform_kernel(func::Expr)
         @kernel $(combinedef(gpu_def))
     end
 
+    setup_gpu_call = quote
+        gpu_kernel_func = $kernel_func_name(params.device, params.block_size)
+        ndrange = ($gpu_ndrange, 1, 1)
+    end
+
     # -- Wrapping function --
 
     # Create the definition of the main function, which will take care of dispatching the arguments
     # between the different implementations, using the definition of the kernel.
     # The arguments of the main function will be:
-    # $func_name(params::ArmonParameters, loop_params..., kernel_args...; kernel_kwargs..., dependencies=NoneEvent())
+    # $func_name(params::ArmonParameters, loop_params..., kernel_args...; kernel_kwargs...)
     main_def = deepcopy(def)
     main_def[:name] = func_name
 
@@ -719,8 +749,7 @@ function transform_kernel(func::Expr)
     params_unpack = isempty(params_args) ? Expr(:block) : :((; $(params_args...)) = params)
  
     # Add our keyword args of the main function
-    push!(main_def[:kwargs], 
-        Expr(:kw, :dependencies, :(NoneEvent())),
+    push!(main_def[:kwargs],
         Expr(:kw, :no_threading, false)
     )
 
@@ -737,36 +766,46 @@ function transform_kernel(func::Expr)
         end
     end
 
+    # Profiling
+    @gensym profiling_state
+    profiling_start = quote
+        $profiling_state = kernel_start(params, $(QuoteNode(func_name)))
+    end
+
+    profiling_end = quote
+        kernel_end(params, $(QuoteNode(func_name)), $profiling_state)
+    end
+
     # Build the kernel call expressions
     cpu_call = Expr(:call, cpu_def[:name], :params, loop_params_names..., call_args..., :threading, :simd)
-    # Equivalent to: gpu_kernel_func(loop_params_names..., args...; ndrange, dependencies)
-    gpu_call = Expr(:call, :gpu_kernel_func, Expr(:parameters, :ndrange, :dependencies), gpu_loop_params_names..., call_args...)
-
-    cpu_call_block = quote
-        wait(dependencies)  # The CPU side is synchronous
-        $setup_cpu_call
-        $cpu_call
-        return NoneEvent()
-    end
-
-    kokkos_call_block = quote
-        $kokkos_call
-        return NoneEvent()
-    end
-
-    gpu_call_block = quote
-        gpu_kernel_func = $kernel_func_name(params.device, params.block_size)  # Get the right KernelAbstraction function...
-        ndrange = $gpu_ndrange
-        return $gpu_call  # ...then call it
-    end
+    # Equivalent to: gpu_kernel_func(loop_params_names..., args...; ndrange)
+    gpu_call = Expr(:call, :gpu_kernel_func, Expr(:parameters, :ndrange), gpu_loop_params_names..., call_args...)
 
     call_block = quote
         if params.use_kokkos
-            $kokkos_call_block
+            $setup_kokkos_call
         elseif params.use_gpu
-            $gpu_call_block
+            $setup_gpu_call
         else
-            $cpu_call_block
+            $setup_cpu_call
+        end
+
+        if params.enable_profiling
+            $profiling_start
+        end
+
+        try
+            return if params.use_kokkos
+                $kokkos_call
+            elseif params.use_gpu
+                $gpu_call
+            else
+                $cpu_call
+            end
+        finally
+            if params.enable_profiling
+                $profiling_end
+            end
         end
     end
 
@@ -826,9 +865,7 @@ macro was used:
  - Then, depending on the indexing macro used:
     - `@index_1D_lin()` : `loop_range::OrdinalRange{Int}`
     - `@index_2D_lin()` : `main_range::OrdinalRange{Int}`, `inner_range::OrdinalRange{Int}`
- - An additional optional keyword argument, `dependencies` is added for compatibility with KA.jl's
-   event model. It defaults to `NoneEvent()`.
- - Another optional keyword argument, `no_threading`, allows to override the `use_threading`
+ - An optional keyword argument, `no_threading`, allows to override the `use_threading`
    parameter, which can be useful in asynchronous contexts. It defaults to `false`.
 
 Using KA.jl's `@Const` to annotate arguments is supported, but they will be present only in the GPU

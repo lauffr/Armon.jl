@@ -23,7 +23,7 @@ test_from_name(::Val{:Sod_circ})  = Sod_circ
 test_from_name(::Val{:Bizarrium}) = Bizarrium
 test_from_name(::Val{:Sedov})     = Sedov
 
-test_from_name(::Val{s}) where s = error("Unknown test case: '$s'")
+test_from_name(::Val{s}) where s = solver_error(:config, "Unknown test case: '$s'")
 test_from_name(s::Symbol) = test_from_name(Val(s))
 
 test_name(::Test) where {Test <: TestCase} = Test.name.name
@@ -41,6 +41,9 @@ default_CFL(::Sedov) = 0.7
 default_max_time(::Union{Sod, Sod_y, Sod_circ}) = 0.20
 default_max_time(::Bizarrium) = 80e-6
 default_max_time(::Sedov) = 1.0
+
+is_conservative(::TestCase) = true
+is_conservative(::Bizarrium) = false
 
 Base.show(io::IO, ::Sod)       = print(io, "Sod shock tube")
 Base.show(io::IO, ::Sod_y)     = print(io, "Sod shock tube (along the Y axis)")

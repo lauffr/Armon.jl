@@ -1,7 +1,7 @@
 module ArmonKokkos
 
 using Armon
-import Armon: ArmonData, Side
+import Armon: ArmonData, Side, solver_error
 import Armon: NoLimiter, MinmodLimiter, SuperbeeLimiter
 import Armon: Sod, Sod_y, Sod_circ, Bizarrium, Sedov
 
@@ -11,7 +11,7 @@ using MPI
 
 
 function Armon.init_device(::Val{:Kokkos}, _)
-    !Kokkos.is_initialized() && error("Kokkos should be initialized before creating ArmonParameters")
+    !Kokkos.is_initialized() && solver_error(:config, "Kokkos should be initialized before creating ArmonParameters")
     return Base.invokelatest(Kokkos.DEFAULT_DEVICE_SPACE)
 end
 
@@ -19,7 +19,7 @@ end
 function Armon.init_backend(::Val{:Kokkos},
     flt_type, cmake_options, kokkos_options, use_MPI, is_root, global_comm
 )
-    !Kokkos.is_initialized() && error("Kokkos has not yet been initialized")
+    !Kokkos.is_initialized() && solver_error(:config, "Kokkos has not yet been initialized")
 
     armon_cpp_lib_src = joinpath(@__DIR__, "..", "lib", "armon_cpp")
     armon_cpp_lib_build = joinpath(Kokkos.KOKKOS_BUILD_DIR, "armon_cpp")
@@ -44,7 +44,7 @@ function limiter_type_to_int(params::ArmonParameters)::Cint
     elseif params.riemann_limiter isa MinmodLimiter   return 1
     elseif params.riemann_limiter isa SuperbeeLimiter return 2
     else
-        error("This limiter is not recognized by armon_cpp")
+        solver_error(:config, "This limiter is not recognized by armon_cpp")
     end
 end
 
@@ -56,7 +56,7 @@ function test_case_to_int(params::ArmonParameters)::Cint
     elseif params.test isa Bizarrium return 3
     elseif params.test isa Sedov     return 4
     else
-        error("This test case is not recognized by armon_cpp")
+        solver_error(:config, "This test case is not recognized by armon_cpp")
     end
 end
 
@@ -79,7 +79,7 @@ function get_init_test_params(params::ArmonParameters, test_params_ptr::Ptr{Noth
 end
 
 
-raise_cpp_exception(str::Cstring) = error("C++ exception: " * Base.unsafe_string(str))
+raise_cpp_exception(str::Cstring) = solver_error(:cpp, "C++ exception: " * Base.unsafe_string(str))
 
 
 function Armon.post_init_device(::Val{:Kokkos}, params::ArmonParameters{T}) where T
@@ -140,7 +140,7 @@ function Armon.device_memory_info(exec::Kokkos.ExecutionSpace)
 end
 
 
-function Base.wait(::ArmonParameters{<:Any, <:Kokkos.ExecutionSpace}, _)
+function Base.wait(::ArmonParameters{<:Any, <:Kokkos.ExecutionSpace})
     Kokkos.fence()
 end
 
@@ -204,30 +204,36 @@ end
 # Copies
 #
 
-function Armon.copy_to_send_buffer!(::ArmonDualData{D, H, <:Kokkos.ExecutionSpace}, array::D, buffer::H;
-    dependencies=NoneEvent()
+function Armon.copy_to_send_buffer!(data::ArmonDualData{D, H, <:Kokkos.ExecutionSpace},
+    array::D, buffer::H
 ) where {D, H}
-    wait(dependencies)
     array_data = Kokkos.subview(array, 1:length(buffer))
-    Kokkos.deep_copy(buffer, array_data)  # TODO: change to asynchronous deep copy
-    return NoneEvent()
+    Kokkos.deep_copy(Armon.device_type(data), buffer, array_data)
 end
 
 
-function Armon.copy_from_recv_buffer!(::ArmonDualData{D, H, <:Kokkos.ExecutionSpace}, array::D, buffer::H;
-    dependencies=NoneEvent()
+function Armon.copy_from_recv_buffer!(data::ArmonDualData{D, H, <:Kokkos.ExecutionSpace},
+    array::D, buffer::H
 ) where {D, H}
-    wait(dependencies)
     array_data = Kokkos.subview(array, 1:length(buffer))
-    Kokkos.deep_copy(array_data, buffer)  # TODO: change to asynchronous deep copy
-    return NoneEvent()
+    Kokkos.deep_copy(Armon.device_type(data), array_data, buffer)
 end
 
 
-function Armon.get_send_comm_array(data::ArmonDualData{D, H, <:Kokkos.ExecutionSpace}, side::Side) where {D, H}
+function Armon.get_send_comm_array(data::ArmonDualData{H, H, <:Kokkos.ExecutionSpace},
+    side::Side
+) where H
+    # Here only for method disambiguation
+    return Base.invoke(Armon.get_send_comm_array, Tuple{ArmonDualData{H, H, <:Any}, Side}, data, side)
+end
+
+
+function Armon.get_send_comm_array(data::ArmonDualData{D, H, <:Kokkos.ExecutionSpace},
+    side::Side
+) where {D, H}
     # Kokkos functions (like deep_copy, etc...) called on the comm array require an actual
     # Kokkos.View, not a view.
-    array_view = Base.invoke(Armon.get_send_comm_array, Tuple{ArmonDualData{D, H, Any}}, data, side)
+    array_view = Base.invoke(Armon.get_send_comm_array, Tuple{ArmonDualData{D, H, <:Any}, Side}, data, side)
     return Kokkos.subview(parent(array_view), parentindices(array_view))
 end
 

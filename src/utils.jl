@@ -36,3 +36,34 @@ Device tag for the high-performance CPU backend using multithreading (with Polye
 vectorisation.
 """
 struct CPU_HP end
+
+
+"""
+    SolverException
+
+Thrown when the solver encounters an invalid state.
+
+The `category` field can be used to distinguish between error types without inspecting the error
+message:
+ - `:config`: a problem in the solver configuration, usually thrown when constructing `ArmonParameters`
+ - `:cpp`: a C++ exception thrown by the C++ Kokkos backend
+ - `:time`: an invalid time step
+
+`ErrorException`s thrown by the solver represent internal errors.
+"""
+struct SolverException <: Exception
+    category::Symbol
+    msg::String
+end
+
+
+solver_error(category::Symbol, msg::String) = throw(SolverException(category, msg))
+
+function solver_error(category::Symbol, msgs::Vararg{Any, N}) where {N}
+    throw(SolverException(category, Base.string(msgs...)))
+end
+
+
+function Base.showerror(io::IO, ex::SolverException)
+    print(io, "SolverException ($(ex.category)): ", ex.msg)
+end

@@ -56,6 +56,9 @@ mutable struct ArmonParameters{Flt_T, Device}
     animation_step::Int
     measure_time::Bool
     timer::TimerOutput
+    time_async::Bool
+    enable_profiling::Bool
+    profiling_info::Set{Symbol}
     return_data::Bool
 
     # Performance
@@ -63,8 +66,8 @@ mutable struct ArmonParameters{Flt_T, Device}
     use_simd::Bool
     use_gpu::Bool
     use_kokkos::Bool
-    device::Device
-    block_size::Int
+    device::Device  # A KernelAbstractions.Backend, Kokkos.ExecutionSpace or CPU_HP
+    block_size::NTuple{3, Int}
 
     # MPI
     use_MPI::Bool
@@ -87,6 +90,9 @@ mutable struct ArmonParameters{Flt_T, Device}
     is_ref::Bool
     comparison_tolerance::Float64
     debug_indexes::Bool
+    check_result::Bool
+    initial_mass::Flt_T
+    initial_energy::Flt_T
 
     # Misc.
     kokkos_project::Any
@@ -107,13 +113,14 @@ function ArmonParameters(;
         silent = 0, output_dir = ".", output_file = "output",
         write_output = false, write_ghosts = false, write_slices = false, output_precision = nothing,
         animation_step = 0,
-        measure_time = true,
+        measure_time = true, time_async = true, profiling = Symbol[],
         use_threading = true, use_simd = true,
         use_gpu = false, device = :CUDA, block_size = 1024,
         use_kokkos = false, cmake_options = [], kokkos_options = nothing,
         use_MPI = true, px = 1, py = 1, reorder_grid = true, global_comm = nothing,
         async_comms = false,
         compare = false, is_ref = false, comparison_tolerance = 1e-10, debug_indexes = false,
+        check_result = false,
         return_data = false
     )
 
@@ -132,7 +139,7 @@ function ArmonParameters(;
     origin = isnothing(origin) ? nothing : Tuple(flt_type.(origin))
 
     if cst_dt && Dt == zero(flt_type)
-        error("Dt == 0 with constant step enabled")
+        solver_error(:config, "Dt == 0 with constant step enabled")
     end
 
     min_nghost = 1
@@ -140,15 +147,15 @@ function ArmonParameters(;
     min_nghost += (projection == :euler_2nd)
 
     if nghost < min_nghost
-        error("Not enough ghost cells for the scheme and/or projection, at least $min_nghost are needed.")
+        solver_error(:config, "Not enough ghost cells for the scheme and/or projection, at least $min_nghost are needed.")
     end
 
     if (nx % px != 0) || (ny % py != 0)
-        error("The dimensions of the global domain ($nx x $ny) are not divisible by the number of processors ($px x $py)")
+        solver_error(:config, "The dimensions of the global domain ($nx x $ny) are not divisible by the number of processors ($px x $py)")
     end
 
     if projection == :none
-        error("Lagrangian mode unsupported")
+        solver_error(:config, "Lagrangian mode unsupported")
     end
 
     if isnothing(stencil_width)
@@ -157,13 +164,13 @@ function ArmonParameters(;
         @warn "The detected minimum stencil width is $min_nghost, but $stencil_width was given. \
                The Boundary conditions might be false." maxlog=1
     elseif stencil_width > nghost
-        error("The stencil width given ($stencil_width) cannot be bigger than the number of ghost cells ($nghost)")
+        solver_error(:config, "The stencil width given ($stencil_width) cannot be bigger than the number of ghost cells ($nghost)")
     end
 
     if riemann_limiter isa Symbol
         riemann_limiter = limiter_from_name(riemann_limiter)
     elseif !(riemann_limiter isa Limiter)
-        error("Expected a Limiter type or a symbol, got: $riemann_limiter")
+        solver_error(:config, "Expected a Limiter type or a symbol, got: $riemann_limiter")
     end
 
     if test isa Symbol
@@ -172,17 +179,26 @@ function ArmonParameters(;
     elseif test isa TestCase
         test_type = typeof(test)
     else
-        error("Expected a TestCase type or a symbol, got: $test")
+        solver_error(:config, "Expected a TestCase type or a symbol, got: $test")
     end
 
     if compare && async_comms
-        error("Cannot compare when using asynchronous communications")
+        solver_error(:config, "Cannot compare when using asynchronous communications")
+    end
+
+    if async_comms && !use_gpu && !use_kokkos
+        @warn "Asynchronous communications only work when using a GPU, or with a multithreading \
+               backend which supports tasking." maxlog=1
+    end
+
+    if async_comms && use_kokkos
+        @warn "Asynchronous communications with Kokkos NYI" maxlog=1
     end
 
     # MPI
     global_comm = something(global_comm, MPI.COMM_WORLD)
     if use_MPI
-        !MPI.Initialized() && error("'use_MPI=true' but MPI has not yet been initialized")
+        !MPI.Initialized() && solver_error(:config, "'use_MPI=true' but MPI has not yet been initialized")
 
         rank = MPI.Comm_rank(global_comm)
         proc_size = MPI.Comm_size(global_comm)
@@ -233,6 +249,20 @@ function ArmonParameters(;
 
         armon_cpp = nothing
         kokkos_lib = nothing
+    end
+
+    length(block_size) > 3 && solver_error(:config, "Expected `block_size` to contain up to 3 elements, got: $block_size")
+    block_size = tuple(block_size..., ntuple(Returns(1), 3 - length(block_size))...)
+
+    # Profiling
+    profiling_info = Set{Symbol}(profiling)
+    measure_time && push!(profiling_info, :TimerOutputs)
+    enable_profiling = !isempty(profiling_info)
+
+    missing_prof = setdiff(profiling_info, (cb.name for cb in Armon.SECTION_PROFILING_CALLBACKS))
+    setdiff!(missing_prof, (cb.name for cb in Armon.KERNEL_PROFILING_CALLBACKS))
+    if !isempty(missing_prof)
+        solver_error(:config, "Unknown profiler$(length(missing_prof) > 1 ? "s" : ""): " * join(missing_prof, ", "))
     end
 
     # Initialize the test
@@ -310,7 +340,8 @@ function ArmonParameters(;
 
         silent, output_dir, output_file,
         write_output, write_ghosts, write_slices, output_precision, animation_step,
-        measure_time, timer,
+        measure_time, timer, time_async,
+        enable_profiling, profiling_info,
         return_data,
 
         use_threading, use_simd, use_gpu, use_kokkos, device, block_size,
@@ -321,6 +352,7 @@ function ArmonParameters(;
         async_comms,
 
         compare, is_ref, comparison_tolerance, debug_indexes,
+        check_result, zero(flt_type), zero(flt_type),
 
         armon_cpp, kokkos_lib,
     )
@@ -353,7 +385,7 @@ end
 
 function print_device_info(io::IO, pad::Int, p::ArmonParameters{<:Any, CPU})
     print_parameter(io, pad, "GPU", true, nl=false)
-    println(io, ": KA.jl's CPU backend (block size: $(p.block_size))")
+    println(io, ": KA.jl's CPU backend (block size: ", join(p.block_size, '×'), ")")
 end
 
 
@@ -369,7 +401,7 @@ function print_parameters(io::IO, p::ArmonParameters; pad = 20)
     print_parameter(io, pad, "solver", p.riemann, nl=false)
     print(io, ", ", p.scheme, " scheme")
     if p.scheme != :Godunov
-        print("(with $(p.riemann_limiter))")
+        print(io, "(with $(p.riemann_limiter))")
     end
     proj_str = p.projection === :euler ? "1ˢᵗ order" : p.projection === :euler_2nd ? "2ⁿᵈ order" : "<unknown>"
     println(io, ", ", proj_str, " projection")
@@ -388,7 +420,7 @@ function print_parameters(io::IO, p::ArmonParameters; pad = 20)
         println(io, "<unknown>")
     end
     print_parameter(io, pad, "time step", "", nl=false)
-    print(io, p.Dt != 0 ? "starting at $(p.Dt), " :  "initiatlized automatically, ")
+    print(io, p.Dt != 0 ? "starting at $(p.Dt), " :  "initialized automatically, ")
     if p.cst_dt
         println(io, "constant")
     else
@@ -401,7 +433,14 @@ function print_parameters(io::IO, p::ArmonParameters; pad = 20)
     print_parameter(io, pad, "max time", p.maxtime, suffix=" sec")
     print_parameter(io, pad, "max cycle", p.maxcycle)
     print_parameter(io, pad, "measure step times", p.measure_time)
+    if !isempty(p.profiling_info)
+        profilers = copy(p.profiling_info)
+        p.measure_time && delete!(profilers, :TimerOutputs)
+        profilers_str = length(profilers) > 0 ? ": " * join(profilers, ", ") : ""
+        print_parameter(io, pad, "profiling", (p.enable_profiling ? "ON" : "OFF") * profilers_str)
+    end
     print_parameter(io, pad, "verbosity", p.silent)
+    print_parameter(io, pad, "check result", p.check_result)
 
     if p.write_output
         print_parameter(io, pad, "write output", p.write_output, nl=false)
@@ -448,7 +487,7 @@ Base.show(io::IO, p::ArmonParameters) = print_parameters(io::IO, p::ArmonParamet
 
 
 function init_device(::Val{D}, _) where D
-    error("Unknown GPU device: $D")
+    solver_error(:config, "Unknown GPU device: $D")
 end
 
 
@@ -575,7 +614,7 @@ function split_axes(params::ArmonParameters{T}) where T
     elseif params.axis_splitting == :Y_only
         return [(Y_axis, T(1.0))]
     else
-        error("Unknown axes splitting method: $(params.axis_splitting)")
+        solver_error(:config, "Unknown axis splitting method: $(params.axis_splitting)")
     end
 end
 
@@ -617,7 +656,7 @@ function update_steps_ranges(params::ArmonParameters)
         extra_FLX += 1
         extra_UP  += 1
     else
-        error("Unknown scheme: $(params.projection)")
+        solver_error(:config, "Unknown scheme: $(params.projection)")
     end
 
     # Real domain
@@ -690,7 +729,7 @@ function boundary_conditions_indexes(params::ArmonParameters, side::Side)
         loop_range = 1:nx
         d = row_length
     else
-        error("Unknown side: $side")
+        solver_error(:config, "Unknown side: $side")
     end
 
     return i_start, loop_range, stride, d
@@ -745,6 +784,11 @@ function ghost_domain(params::ArmonParameters, side::Side)
 end
 
 
-function Base.wait(_::ArmonParameters, dependencies)
-    wait(dependencies)
+function Base.wait(::ArmonParameters{<:Any, <:Union{CPU, CPU_HP}})
+    # CPU backends are synchronous
+end
+
+
+function Base.wait(params::ArmonParameters{<:Any, <:GPU})
+    KernelAbstractions.synchronize(params.device)
 end

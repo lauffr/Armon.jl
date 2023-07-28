@@ -19,19 +19,19 @@ const KERNEL_REPEATS = 100
 
 # (name, run on a single row or not, lambda to launch the kernel)
 const KERNELS = [
-    ("acoustic!",                  false, (p, d, r, _ , deps) -> Armon.acoustic!(                 p, d, "label", r, d.ustar, d.pstar, d.umat;    dependencies=deps) ),
-    ("acoustic_GAD!",              false, (p, d, r, dt, deps) -> Armon.acoustic_GAD!(             p, d, "label", r, dt, d.umat, MinmodLimiter(); dependencies=deps) ),
-    ("update_perfect_gas_EOS!",    false, (p, d, r, _ , deps) -> Armon.update_perfect_gas_EOS!(   p, d, "label", r, 7/5;                         dependencies=deps) ),
-    ("update_bizarrium_EOS!",      false, (p, d, r, _ , deps) -> Armon.update_bizarrium_EOS!(     p, d, "label", r;                              dependencies=deps) ),
-    ("cell_update!",               false, (p, d, r, dt, deps) -> Armon.cell_update!(              p, d, linear_range(r), dt, d.umat;             dependencies=deps) ),
-    ("cell_update_lagrange!",      false, (p, d, r, dt, deps) -> Armon.cell_update_lagrange!(     p, d, linear_range(r), p.ifin, dt, d.x;        dependencies=deps) ),
-    ("euler_projection!",          false, (p, d, r, dt, deps) -> Armon.euler_projection!(         p, d, r, dt, d.work_array_1, d.work_array_2, d.work_array_3, d.work_array_4; dependencies=deps)                ),
-    ("first_order_euler_remap!",   false, (p, d, r, dt, deps) -> Armon.first_order_euler_remap!(  p, d, r, dt, d.work_array_1, d.work_array_2, d.work_array_3, d.work_array_4; dependencies=deps)                ),
-    ("second_order_euler_remap!",  false, (p, d, r, dt, deps) -> Armon.second_order_euler_remap!( p, d, r, dt, d.work_array_1, d.work_array_2, d.work_array_3, d.work_array_4; dependencies=deps)                ),
-    ("boundaryConditions! left",   true,  (p, d, _, _ , deps) -> Armon.boundaryConditions!(       p, d, 1:p.ny, p.row_length, p.index_start + p.idx_row #= @i(0,1) =#,            1, -1., 1.; dependencies=deps) ),
-    ("boundaryConditions! bottom", true,  (p, d, _, _ , deps) -> Armon.boundaryConditions!(       p, d, 1:p.nx,            1, p.index_start + p.idx_col #= @i(1,0) =#, p.row_length,  1., 1.; dependencies=deps) ),
-    ("read_border_array!",         true,  (p, d, r, _ , deps) -> Armon.read_border_array!(        p, d, r, p.nx, d.tmp_comm_array;                 dependencies=deps) ),
-    ("write_border_array!",        true,  (p, d, r, _ , deps) -> Armon.write_border_array!(       p, d, r, p.nx, d.tmp_comm_array;                 dependencies=deps) ),
+    ("acoustic!",                  false, (p, d, r, _ ) -> Armon.acoustic!(                 p, d, "label", r, d.ustar, d.pstar, d.umat;   )),
+    ("acoustic_GAD!",              false, (p, d, r, dt) -> Armon.acoustic_GAD!(             p, d, "label", r, dt, d.umat, MinmodLimiter();)),
+    ("update_perfect_gas_EOS!",    false, (p, d, r, _ ) -> Armon.update_perfect_gas_EOS!(   p, d, "label", r, 7/5;                        )),
+    ("update_bizarrium_EOS!",      false, (p, d, r, _ ) -> Armon.update_bizarrium_EOS!(     p, d, "label", r;                             )),
+    ("cell_update!",               false, (p, d, r, dt) -> Armon.cell_update!(              p, d, linear_range(r), dt, d.umat;            )),
+    ("cell_update_lagrange!",      false, (p, d, r, dt) -> Armon.cell_update_lagrange!(     p, d, linear_range(r), p.ifin, dt, d.x;       )),
+    ("euler_projection!",          false, (p, d, r, dt) -> Armon.euler_projection!(         p, d, r, dt, d.work_array_1, d.work_array_2, d.work_array_3, d.work_array_4)),
+    ("first_order_euler_remap!",   false, (p, d, r, dt) -> Armon.first_order_euler_remap!(  p, d, r, dt, d.work_array_1, d.work_array_2, d.work_array_3, d.work_array_4)),
+    ("second_order_euler_remap!",  false, (p, d, r, dt) -> Armon.second_order_euler_remap!( p, d, r, dt, d.work_array_1, d.work_array_2, d.work_array_3, d.work_array_4)),
+    ("boundaryConditions! left",   true,  (p, d, _, _ ) -> Armon.boundaryConditions!(       p, d, 1:p.ny, p.row_length, p.index_start + p.idx_row #= @i(0,1) =#,            1, -1., 1.)),
+    ("boundaryConditions! bottom", true,  (p, d, _, _ ) -> Armon.boundaryConditions!(       p, d, 1:p.nx,            1, p.index_start + p.idx_col #= @i(1,0) =#, p.row_length,  1., 1.)),
+    ("read_border_array!",         true,  (p, d, r, _ ) -> Armon.read_border_array!(        p, d, r, p.nx, d.tmp_comm_array;              )),
+    ("write_border_array!",        true,  (p, d, r, _ ) -> Armon.write_border_array!(       p, d, r, p.nx, d.tmp_comm_array;              )),
 ]
 
 
@@ -111,7 +111,7 @@ function get_performance_params(test::Symbol, type::Type, device_type::Symbol, n
             maxcycle=50, maxtime=1,
             silent=5, write_output=false, measure_time=false,
             use_MPI=false, async_comms=false,
-            use_gpu=true, device=gpu_type, block_size=1024)
+            use_gpu=true, device=gpu_type, block_size=128)
     end
 end
 
@@ -168,21 +168,20 @@ function measure_kernel_performance(params::ArmonParameters{T}, data::ArmonDualD
     end
 
     dt = T(1e-6)
-    event = NoneEvent()
 
     # Compile the kernel and make sure it runs as fast as possible
     # Kernels which weren't used during the solver's performance measurement can take a few
     # iterations to be as fast as possible (reason unknown).
     for _ in 1:KERNEL_REPEATS
-        event = kernel_lambda(params, data, range, dt, event)
+        kernel_lambda(params, data, range, dt)
     end
-    wait(event)
+    wait(params)
 
     kernel_time = @elapsed begin
         for _ in 1:KERNEL_REPEATS
-            event = kernel_lambda(params, data, range, dt, event)
+            kernel_lambda(params, data, range, dt)
         end
-        wait(event)  # Wait for the last one since on GPU kernel launches are asynchronous
+        wait(params)
     end
 
     return round(kernel_time / KERNEL_REPEATS; sigdigits=4)

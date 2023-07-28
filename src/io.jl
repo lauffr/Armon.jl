@@ -80,7 +80,7 @@ function write_slices_files(params::ArmonParameters, data::ArmonDataOrDual, file
     (px, py) = proc_dims
     (cx, cy) = cart_coords
 
-    ((nx != ny) || (px != py)) && error("Domain slices are only implemented for square domains on a square process grid.")
+    ((nx != ny) || (px != py)) && solver_error(:config, "Domain slices are only implemented for square domains on a square process grid.")
 
     # Middle row
     cy_mid = cld(py, 2) - 1
@@ -247,9 +247,9 @@ function compare_with_file(params::ArmonParameters, data::ArmonData,
 end
 
 
-function step_checkpoint(params::ArmonParameters, data::ArmonDualData, step_label::String; dependencies=NoneEvent())
+function step_checkpoint(params::ArmonParameters, data::ArmonDualData, step_label::String)
     if params.compare
-        wait(params, dependencies)
+        wait(params)
 
         device_to_host!(data)
         h_data = host(data)

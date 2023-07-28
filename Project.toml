@@ -1,43 +1,47 @@
 name = "Armon"
 uuid = "b773a7a3-b593-48d6-82f6-54bf745a629b"
 authors = ["Luc Briand <luc.briand35@gmail.com> and contributors"]
-version = "0.2.0"
+version = "0.3.2"
 
 [deps]
 AMDGPU = "21141c5a-9bdb-4563-92ae-f87d6854732e"
 CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
-CUDAKernels = "72cfdca4-0801-4ab0-bf6a-d52aa10adc57"
 KernelAbstractions = "63c18a36-062a-441e-b654-da1e3ab1ce7c"
 Kokkos = "3296cea9-b0de-4b57-aba0-ce554b517c3b"
 MPI = "da04e1cc-30fd-572f-bb4f-1f8673147195"
 MacroTools = "1914dd2f-81c6-5fcd-8719-6d5c9610ff09"
+NVTX = "5da4648a-3479-48b8-97b9-01cb529c0a1f"
 Polyester = "f517fe37-dbe3-4b94-8317-1923a5111588"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
-ROCKernels = "7eb9e9f0-4bd3-4c4c-8bef-26bd9629d9b9"
 Requires = "ae029012-a4dd-5104-9daa-d747884805df"
 ThreadPinning = "811555cd-349b-4f26-b7bc-1f208b848042"
 TimerOutputs = "a759f4b9-e2f1-59dc-863e-4aeb61b1ea8f"
 
-[weakdeps]
-AMDGPU = "21141c5a-9bdb-4563-92ae-f87d6854732e"
-CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
-Kokkos = "3296cea9-b0de-4b57-aba0-ce554b517c3b"
+[compat]
+AMDGPU = "0.4, 0.5"
+CUDA = "≥ 4.1.0"
+KernelAbstractions = "0.9"
+julia = "1.9"
 
 [extensions]
 ArmonAMDGPU = "AMDGPU"
 ArmonCUDA = "CUDA"
 ArmonKokkos = "Kokkos"
-
-[compat]
-KernelAbstractions = "^0.8.6"
-julia = "1.7"
+ArmonNVTX = "NVTX"
 
 [extras]
 AMDGPU = "21141c5a-9bdb-4563-92ae-f87d6854732e"
 CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
 Kokkos = "3296cea9-b0de-4b57-aba0-ce554b517c3b"
 MPI = "da04e1cc-30fd-572f-bb4f-1f8673147195"
+NVTX = "5da4648a-3479-48b8-97b9-01cb529c0a1f"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
 test = ["Test", "Kokkos", "CUDA", "AMDGPU", "MPI"]
+
+[weakdeps]
+AMDGPU = "21141c5a-9bdb-4563-92ae-f87d6854732e"
+CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+Kokkos = "3296cea9-b0de-4b57-aba0-ce554b517c3b"
+NVTX = "5da4648a-3479-48b8-97b9-01cb529c0a1f"

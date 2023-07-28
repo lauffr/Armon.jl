@@ -23,82 +23,103 @@ end
 
 
 macro checkpoint(step_label)
-    esc(:(step_checkpoint(params, data, string($step_label); dependencies)))
+    esc(:(step_checkpoint(params, data, string($step_label))))
 end
 
 
-function init_time_step(params::ArmonParameters, data::ArmonDualData)
-    if params.Dt == 0
-        # No imposed initial time step, we must compute the first one manually
-        update_EOS!(params, data, :full)
-        step_checkpoint(params, data, "update_EOS_init") && return true
-        time_step(params, data) && return true
-        params.curr_cycle_dt = params.next_cycle_dt
-    else
-        params.next_cycle_dt = params.Dt
-        params.curr_cycle_dt = params.Dt
+function solver_cycle(params::ArmonParameters, data::ArmonDualData)
+    if params.cycle == 0
+        @section "EOS_init" update_EOS!(params, data, :full)
+        step_checkpoint(params, data, "EOS_init") && return true
     end
-    return false
-end
 
+    (@section "time_step" time_step(params, data)) && return true
 
-function solver_cycle(params::ArmonParameters, data::ArmonDualData; dependencies=NoneEvent())
-    (; timer) = params
-    (@timeit timer "time_step" time_step(params, data; dependencies)) && @goto stop
+    if params.cycle == 0
+        params.curr_cycle_dt = params.next_cycle_dt
+    end
 
-    for (axis, dt_factor) in split_axes(params)
+    @section "$axis" for (axis, dt_factor) in split_axes(params)
         update_axis_parameters(params, axis)
         update_steps_ranges(params)
         params.cycle_dt = params.curr_cycle_dt * dt_factor
 
-        @timeit timer "$axis" begin
+        @section "EOS" update_EOS!(params, data, :full)
+        @checkpoint("EOS") && return true
 
         if params.async_comms
-            dependencies = @timeit timer "EOS lb" update_EOS!(params, data, :outer_lb; dependencies)
-            dependencies = @timeit timer "EOS rt" update_EOS!(params, data, :outer_rt; dependencies)
+            #=
+            ┌───┬────┬───────────┬────┬───┐
+            │   │    │           │    │   │
+            │ G │ LB │   inner   │ RT │ G │
+            │   │    │           │    │   │
+            └───┴────┴───────────┴────┴───┘
 
-            outer_lb_BC = @timeit timer "BC lb" boundaryConditions!(params, data, :outer_lb; dependencies)
-            outer_rt_BC = @timeit timer "BC rt" boundaryConditions!(params, data, :outer_rt; dependencies)
+            - G: ghost cells
+            - LB: left (X axis pass) or bottom (Y axis pass) domain
+            - RT: right (X axis pass) or top (Y axis pass) domain
+            - inner: inner domain
 
-            dependencies = @timeit timer "EOS" update_EOS!(params, data, :inner; dependencies)
-            dependencies = @timeit timer "fluxes" numericalFluxes!(params, data, :inner; dependencies)
+            Task graph:
+                     ┌──────────────────┐
+                   ┌─┤   Fluxes inner   ├─┐
+                   │ └──────────────────┘ │
+                   │                      │
+             ┌───┐ │ ┌─────┐  ┌─────────┐ │
+            ─┤EOS├─┼─┤BC LB├──┤Fluxes LB├─┼─
+             └───┘ │ └─────┘  └─────────┘ │
+                   │                      │
+                   │ ┌─────┐  ┌─────────┐ │
+                   └─┤BC RT├──┤Fluxes RT├─┘
+                     └─────┘  └─────────┘
 
-            dependencies = MultiEvent((dependencies, outer_lb_BC, outer_rt_BC))
-            dependencies = @timeit timer "Post BC" post_boundary_conditions(params, data; dependencies)
+            TODO: allow async EOS by computing inner cells EOS variables in `Fluxes LB/RT` and outer
+              cells EOS variables in `Fluxes inner`, breaking the mutual dependencies of those tasks
+            =#
 
-            dependencies = @timeit timer "fluxes lb" numericalFluxes!(params, data, :outer_lb; dependencies)
-            dependencies = @timeit timer "fluxes rt" numericalFluxes!(params, data, :outer_rt; dependencies)
+            wait(params)
 
-            # TODO: async cellUpdate?
+            @sync begin
+                @async begin
+                    @section "BC lb"     async=true boundaryConditions!(params, data, :outer_lb)
+                    @section "fluxes lb" async=true numericalFluxes!(params, data, :outer_lb)
+                    wait(params)  # We must wait for the CUDA/HIP stream to end before ending any task
+                end
+
+                @async begin
+                    @section "BC rt"     async=true boundaryConditions!(params, data, :outer_rt)
+                    @section "fluxes rt" async=true numericalFluxes!(params, data, :outer_rt)
+                    wait(params)
+                end
+
+                @async begin
+                    @section "fluxes"    async=true numericalFluxes!(params, data, :inner)
+                    wait(params)
+                end
+            end
+
+            @checkpoint("numericalFluxes") && return true
         else
-            dependencies = @timeit timer "EOS" update_EOS!(params, data, :full; dependencies)
-            @checkpoint("update_EOS") && @goto stop
+            @section "BC" boundaryConditions!(params, data)
+            @checkpoint("boundaryConditions") && return true
 
-            dependencies = @timeit timer "BC" boundaryConditions!(params, data; dependencies)
-            @checkpoint("boundaryConditions") && @goto stop
-
-            dependencies = @timeit timer "fluxes" numericalFluxes!(params, data, :full; dependencies)
-            @checkpoint("numericalFluxes") && @goto stop
+            @section "fluxes" numericalFluxes!(params, data, :full)
+            @checkpoint("numericalFluxes") && return true
         end
 
-        dependencies = @timeit timer "update" cellUpdate!(params, data; dependencies)
-        @checkpoint("cellUpdate") && @goto stop
+        @section "update" cellUpdate!(params, data)
+        @checkpoint("cellUpdate") && return true
 
-        dependencies = @timeit timer "remap" projection_remap!(params, data; dependencies)
-        @checkpoint("projection_remap") && @goto stop
-
-        end
+        @section "remap" projection_remap!(params, data)
+        @checkpoint("projection_remap") && return true
     end
 
-    return dependencies, false
-
-    @label stop
-    return dependencies, true
+    return false
 end
 
 
 function time_loop(params::ArmonParameters, data::ArmonDualData)
-    (; maxtime, maxcycle, nx, ny, silent, animation_step, is_root) = params
+    (; maxtime, maxcycle, nx, ny, silent, animation_step, is_root, initial_mass, initial_energy) = params
 
     params.cycle = 0
     params.time = 0
@@ -107,28 +128,20 @@ function time_loop(params::ArmonParameters, data::ArmonDualData)
 
     total_cycles_time = 0.
 
-    if silent <= 1
-        initial_mass, initial_energy = conservation_vars(params, data)
-    end
-
     t1 = time_ns()
-
-    (@timeit params.timer "init_time_step" init_time_step(params, data)) && @goto stop
-
-    dependencies = NoneEvent()
 
     # Main solver loop
     while params.time < maxtime && params.cycle < maxcycle
         cycle_start = time_ns()
 
-        dependencies, stop = @timeit params.timer "solver_cycle" solver_cycle(params, data; dependencies)
-        stop && @goto stop
+        stop = @section "solver_cycle" solver_cycle(params, data)
+        stop && break
 
         total_cycles_time += time_ns() - cycle_start
 
         if is_root
             if silent <= 1
-                wait(params, dependencies)
+                wait(params)
                 current_mass, current_energy = conservation_vars(params, data)
                 ΔM = abs(initial_mass - current_mass)     / initial_mass   * 100
                 ΔE = abs(initial_energy - current_energy) / initial_energy * 100
@@ -136,7 +149,7 @@ function time_loop(params::ArmonParameters, data::ArmonDualData)
                     params.cycle + 1, params.curr_cycle_dt, params.time, ΔM, ΔE)
             end
         elseif silent <= 1
-            wait(params, dependencies)
+            wait(params)
             conservation_vars(params, data)
         end
 
@@ -144,14 +157,14 @@ function time_loop(params::ArmonParameters, data::ArmonDualData)
         params.time += params.curr_cycle_dt
 
         if animation_step != 0 && (params.cycle - 1) % animation_step == 0
-            wait(params, dependencies)
+            wait(params)
             frame_index = (params.cycle - 1) ÷ animation_step
             frame_file = joinpath("anim", params.output_file) * "_" * @sprintf("%03d", frame_index)
             write_sub_domain_file(params, data, frame_file)
         end
     end
 
-    wait(params, dependencies)
+    @section "Last fence" wait(params)
 
     @label stop
 
@@ -219,12 +232,46 @@ function armon(params::ArmonParameters{T}) where T
 
     # Allocate without initialisation in order to correctly map the NUMA space using the first-touch
     # policy when working on CPU only
-    @timeit timer "init" begin
-        data = @timeit timer "alloc" ArmonDualData(params)
-        @timeit timer "init_test" wait(params, init_test(params, data))
+    @section "init" begin
+        data = @section "alloc" ArmonDualData(params)
+        @section "init_test" begin
+            init_test(params, data)
+            wait(params)
+        end
+    end
+
+    if params.check_result || params.silent <= 1
+        @section "Conservation variables" begin
+            params.initial_mass, params.initial_energy = conservation_vars(params, data) 
+        end
     end
 
     dt, cycles, cells_per_sec = time_loop(params, data)
+
+    if params.check_result && is_conservative(params.test)
+        @section "Conservation variables" begin
+            final_mass, final_energy = conservation_vars(params, data) 
+        end
+
+        if params.is_root
+            Δm = abs(final_mass   - params.initial_mass)   / params.initial_mass
+            Δe = abs(final_energy - params.initial_energy) / params.initial_energy
+
+            # Scale the tolerance with the progress in the default test case, therefore roughly
+            # accounting for the number of cells (more cells -> slower time step -> more precision).
+            rtol = 1e-2 * min(1, params.time / default_max_time(params.test))
+
+            # 1% of relative error, or 10⁻¹¹ of absolute error, whichever is greater.
+            Δm_ok = isapprox(Δm, 0; atol=1e-12, rtol)
+            Δe_ok = isapprox(Δe, 0; atol=1e-12, rtol)
+
+            if !(Δm_ok && Δe_ok)
+                @warn "Mass and energy are not constant, the solution might not be valid!\n\
+                    |mₑ-mᵢ|/mᵢ = $(@sprintf("%#8.6g", Δm))\n\
+                    |Eₑ-Eᵢ|/Eᵢ = $(@sprintf("%#8.6g", Δe))\n"
+            end
+        end
+    end
 
     if params.measure_time
         disable_timer!(timer)
@@ -236,7 +283,10 @@ function armon(params::ArmonParameters{T}) where T
         params.measure_time ? copy(timer) : nothing
     )
 
-    device_to_host!(data)  # No-op on host
+    if params.return_data || params.write_output || params.write_slices
+        device_to_host!(data)  # No-op if the host is the device
+    end
+
     params.write_output && write_sub_domain_file(params, data, params.output_file)
     params.write_slices && write_slices_files(params, data, params.output_file)
 
