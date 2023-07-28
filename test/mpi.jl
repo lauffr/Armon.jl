@@ -5,11 +5,18 @@ import Armon: read_border_array!, copy_to_send_buffer!, copy_from_recv_buffer!, 
 import Armon: get_recv_comm_array, get_send_comm_array, send_buffer, recv_buffer
 
 using MPI
-using CUDA: device as device_of
+import CUDA
 using AMDGPU
 
 MPI.Init()
 MPI.Barrier(MPI.COMM_WORLD)
+
+
+TEST_CUDA_MPI = CUDA.functional()   && parse(Bool, get(ENV, "TEST_CUDA_MPI", "false"))
+TEST_ROCM_MPI = AMDGPU.functional() && parse(Bool, get(ENV, "TEST_ROCM_MPI", "false"))
+
+TEST_TYPES_MPI = (Float64,)
+TEST_CASES_MPI = (:Sod, :Sod_y, :Sod_circ, #=:Sedov,=# :Bizarrium)
 
 
 TEST_KOKKOS_MPI = parse(Bool, get(ENV, "TEST_KOKKOS_MPI", "false"))
@@ -313,8 +320,42 @@ function test_halo_exchange(px, py, proc_in_grid, global_comm)
 end
 
 
-# All grid should be able to perfectly divide the number of cells in each direction in the reference
-# case (100×100)
+function test_reference(prefix, comm, test, type, px, py; kwargs...)
+    ref_params = ref_params_for_sub_domain(test, type, px, py; nx=NX, ny=NY, global_comm=comm, kwargs...)
+
+    diff_count, data, ref_data = try
+        dt, cycles, data = run_armon_reference(ref_params)
+        ref_dt, ref_cycles, ref_data = ref_data_for_sub_domain(ref_params)
+
+        @root_test dt ≈ ref_dt atol=abs_tol(type, ref_params.test) rtol=rel_tol(type, ref_params.test)
+        @root_test cycles == ref_cycles
+
+        diff_count, _ = count_differences(ref_params, host(data), ref_data)
+
+        diff_count, data, ref_data
+    catch e
+        # We cannot throw exceptions since it would create a deadlock
+        println("[$(MPI.Comm_rank(comm))] threw an exception:")
+        Base.showerror(stdout, e, catch_backtrace(); backtrace=true)
+        -1, nothing, nothing
+    end
+
+    if WRITE_FAILED
+        global_diff_count = MPI.Allreduce(diff_count, MPI.SUM, comm)
+        if global_diff_count > 0 && diff_count >= 0
+            prefix *= isempty(prefix) ? "" : "_"
+            write_sub_domain_file(ref_params, data, "$(prefix)test_$(test)_$(type)_$(px)x$(py)"; no_msg=true)
+            write_sub_domain_file(ref_params, ref_data, "$(prefix)ref_$(test)_$(type)_$(px)x$(py)"; no_msg=true)
+        end
+        println("[$(MPI.Comm_rank(comm))]: found $diff_count")
+    end
+
+    return diff_count == 0
+end
+
+
+# All grids must be able to perfectly divide the number of cells in each direction
+# of the reference case (100×100)
 domain_combinations = [
     (1, 1),
     (1, 2),
@@ -350,109 +391,76 @@ total_proc_count = MPI.Comm_size(MPI.COMM_WORLD)
             test_halo_exchange(px, py, proc_in_grid, comm)
         end
 
-        @testset "Reference" begin
-            @testset "$test with $type" for type in (Float64,),
-                                            test in (:Sod, :Sod_y, :Sod_circ, :Sedov, :Bizarrium)
-                @MPI_test comm begin
-                    ref_params = ref_params_for_sub_domain(test, type, px, py; nx=NX, ny=NY, global_comm=comm)
-                    dt, cycles, data = run_armon_reference(ref_params)
-                    ref_dt, ref_cycles, ref_data = ref_data_for_sub_domain(ref_params)
 
-                    @root_test dt ≈ ref_dt atol=abs_tol(type, ref_params.test) rtol=rel_tol(type, ref_params.test)
-                    @root_test cycles == ref_cycles
+        @testset "CPU" begin
+            @testset "Reference" begin
+                @testset "$test with $type" for type in TEST_TYPES_MPI, test in TEST_CASES_MPI
+                    @MPI_test comm begin
+                        test_reference("CPU", comm, test, type, px, py)
+                    end skip=!enough_processes || !proc_in_grid
+                end
+            end
 
-                    diff_count, _ = count_differences(ref_params, host(data), ref_data)
-                    if WRITE_FAILED
-                        global_diff_count = MPI.Allreduce(diff_count, MPI.SUM, comm)
-                        if global_diff_count > 0
-                            write_sub_domain_file(ref_params, data, "test_$(test)_$(type)_$(px)x$(py)"; no_msg=true)
-                            write_sub_domain_file(ref_params, ref_data, "ref_$(test)_$(type)_$(px)x$(py)"; no_msg=true)
-                        end
-                        println("[$(MPI.Comm_rank(comm))]: found $diff_count")
+            @testset "Async communications" begin
+                @testset "$test with $type" for type in TEST_TYPES_MPI, test in TEST_CASES_MPI
+                    @MPI_test comm begin
+                        test_reference("async", comm, test, type, px, py; async_comms=true)
+                    end skip=!enough_processes || !proc_in_grid
+                end
+            end
+
+            @testset "Conservation" begin
+                @testset "$test" for test in (:Sod, :Sod_y, :Sod_circ)
+                    if enough_processes && proc_in_grid
+                        ref_params = ref_params_for_sub_domain(test, Float64, px, py;
+                            maxcycle=10000, maxtime=10000,
+                            nx=NX, ny=NY, global_comm=comm
+                        )
+
+                        data = ArmonDualData(ref_params)
+                        init_test(ref_params, data)
+
+                        init_mass, init_energy = conservation_vars(ref_params, data)
+                        time_loop(ref_params, data)
+                        end_mass, end_energy = conservation_vars(ref_params, data)
+                    else
+                        init_mass, init_energy = 0., 0.
+                        end_mass,  end_energy  = 0., 0.
                     end
 
-                    diff_count == 0
-                end skip=!enough_processes || !proc_in_grid
-            end
-        end
-
-
-        @testset "Async communications" begin
-            @testset "$test with $type" for type in (Float64,),
-                                            test in (:Sod, :Sod_y, :Sod_circ, :Sedov, :Bizarrium)
-                @MPI_test comm begin
-                    ref_params = ref_params_for_sub_domain(test, type, px, py; async_comms=true, nx=NX, ny=NY, global_comm=comm)
-                    dt, cycles, data = run_armon_reference(ref_params)
-                    ref_dt, ref_cycles, ref_data = ref_data_for_sub_domain(ref_params)
-
-                    @root_test dt ≈ ref_dt atol=abs_tol(type, ref_params.test) rtol=rel_tol(type, ref_params.test)
-                    @root_test cycles == ref_cycles
-
-                    diff_count, _ = count_differences(ref_params, host(data), ref_data)
-                    diff_count == 0
-                end skip=!enough_processes || !proc_in_grid
-            end
-        end
-
-
-        @testset "Conservation" begin
-            @testset "$test" for test in (:Sod, :Sod_y, :Sod_circ)
-                if enough_processes && proc_in_grid
-                    ref_params = ref_params_for_sub_domain(test, Float64, px, py; maxcycle=10000, maxtime=10000, nx=NX, ny=NY, global_comm=comm)
-
-                    data = ArmonDualData(ref_params)
-                    init_test(ref_params, data)
-
-                    init_mass, init_energy = conservation_vars(ref_params, data)
-                    time_loop(ref_params, data)
-                    end_mass, end_energy = conservation_vars(ref_params, data)
-                else
-                    init_mass, init_energy = 0., 0.
-                    end_mass,  end_energy  = 0., 0.
+                    @root_test   init_mass ≈ end_mass    atol=1e-12  skip=!enough_processes
+                    @root_test init_energy ≈ end_energy  atol=1e-12  skip=!enough_processes
                 end
-
-                @root_test   init_mass ≈ end_mass    atol=1e-12  skip=!enough_processes
-                @root_test init_energy ≈ end_energy  atol=1e-12  skip=!enough_processes
             end
         end
 
-        @testset "CUDA GPU" begin
-            # no_cuda = !CUDA.has_cuda_gpu()
-            # TODO: CUDA GPU MPI tests
-        end
 
-        @testset "ROCm GPU" begin
-            # no_rocm = !AMDGPU.has_rocm_gpu()
-            # TODO: CUDA GPU MPI tests
-        end
-
-        TEST_KOKKOS_MPI && @testset "Kokkos" begin
-            @testset "$test with $type (async: $async_comms)" for type in (Float64,),
-                                                                  test in (:Sod, :Sod_y, :Sod_circ, :Sedov, :Bizarrium),
+        @testset "CUDA" begin
+            @testset "$test with $type (async: $async_comms)" for type in TEST_TYPES_MPI, test in TEST_CASES_MPI,
                                                                   async_comms in (false, true)
                 @MPI_test comm begin
-                    ref_params = ref_params_for_sub_domain(test, type, px, py;
-                        nx=NX, ny=NY, global_comm=comm,
-                        use_kokkos=true, async_comms
-                    )
-                    dt, cycles, data = run_armon_reference(ref_params)
-                    ref_dt, ref_cycles, ref_data = ref_data_for_sub_domain(ref_params)
+                    test_reference("CUDA", comm, test, type, px, py; use_gpu=true, device=:CUDA, async_comms)
+                end skip=!TEST_CUDA_MPI ||!enough_processes || !proc_in_grid
+            end
+        end
 
-                    @root_test dt ≈ ref_dt atol=abs_tol(type, ref_params.test) rtol=rel_tol(type, ref_params.test)
-                    @root_test cycles == ref_cycles
 
-                    diff_count, _ = count_differences(ref_params, host(data), ref_data)
-                    if WRITE_FAILED
-                        global_diff_count = MPI.Allreduce(diff_count, MPI.SUM, comm)
-                        if global_diff_count > 0
-                            write_sub_domain_file(ref_params, data, "test_$(test)_$(type)_$(px)x$(py)"; no_msg=true)
-                            write_sub_domain_file(ref_params, ref_data, "ref_$(test)_$(type)_$(px)x$(py)"; no_msg=true)
-                        end
-                        println("[$(MPI.Comm_rank(comm))]: found $diff_count")
-                    end
+        @testset "ROCm" begin
+            @testset "$test with $type (async: $async_comms)" for type in TEST_TYPES_MPI, test in TEST_CASES_MPI,
+                                                                  async_comms in (false, true)
+                @MPI_test comm begin
+                    test_reference("ROCm", comm, test, type, px, py; use_gpu=true, device=:ROCM, async_comms)
+                end skip=!TEST_ROCM_MPI || !enough_processes || !proc_in_grid
+            end
+        end
 
-                    diff_count == 0
-                end skip=!enough_processes || !proc_in_grid
+
+        @testset "Kokkos" begin
+            @testset "$test with $type (async: $async_comms)" for type in TEST_TYPES_MPI, test in TEST_CASES_MPI,
+                                                                  async_comms in (false, true)
+                @MPI_test comm begin
+                    test_reference("kokkos", comm, test, type, px, py; use_kokkos=true, async_comms)
+                end skip=!TEST_KOKKOS_MPI || !enough_processes || !proc_in_grid
             end
         end
 

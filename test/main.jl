@@ -2,6 +2,7 @@
 !isinteractive() && @info "Loading..."
 
 using Armon
+import Armon: SolverException
 using Test
 
 WRITE_FAILED = parse(Bool, get(ENV, "WRITE_FAILED", "false"))  # TODO: impl for non-mpi tests
@@ -112,8 +113,9 @@ function do_tests(tests_to_do)
         Test.print_test_results(ts)
     end
 
-    if !isinteractive() && Armon.Kokkos.is_initialized()
-        Armon.Kokkos.finalize()
+    kokkos_id = Base.PkgId(Base.UUID("3296cea9-b0de-4b57-aba0-ce554b517c3b"), "Kokkos")
+    if !isinteractive() && haskey(Base.loaded_modules, kokkos_id)
+        Base.loaded_modules[kokkos_id].finalize()
     end
 end
 
