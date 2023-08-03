@@ -1,7 +1,7 @@
 
 abstract type TestCase end
-abstract type TwoStateTestCase <: TestCase end
 
+abstract type TwoStateTestCase <: TestCase end
 struct Sod       <: TwoStateTestCase end
 struct Sod_y     <: TwoStateTestCase end
 struct Sod_circ  <: TwoStateTestCase end
@@ -45,6 +45,8 @@ default_max_time(::Sedov) = 1.0
 is_conservative(::TestCase) = true
 is_conservative(::Bizarrium) = false
 
+has_source_term(::TestCase) = false
+
 Base.show(io::IO, ::Sod)       = print(io, "Sod shock tube")
 Base.show(io::IO, ::Sod_y)     = print(io, "Sod shock tube (along the Y axis)")
 Base.show(io::IO, ::Sod_circ)  = print(io, "Sod shock tube (cylindrical symmetry around the Z axis)")
@@ -58,9 +60,28 @@ test_region_high(x::T, y::T, ::Sod_circ)  where T = (x - T(0.5))^2 + (y - T(0.5)
 test_region_high(x::T, _::T, ::Bizarrium) where T = x ≤ 0.5
 test_region_high(x::T, y::T, s::Sedov{T}) where T = x^2 + y^2 ≤ s.r^2
 
+
+struct InitTestParamsTwoState{T}
+    high_ρ::T
+    low_ρ::T
+    high_E::T
+    low_E::T
+    high_u::T
+    low_u::T
+    high_v::T
+    low_v::T
+end
+
+struct InitTestParams{T}
+    ρ::T
+    E::T
+    u::T
+    v::T
+end
+
+
 function init_test_params(::Union{Sod, Sod_y, Sod_circ})
     return (
-        #= γ      =# 7/5,
         #= high_ρ =# 1.,
         #= low_ρ  =# 0.125,
         #= high_E =# 2.5,
@@ -74,7 +95,6 @@ end
 
 function init_test_params(::Bizarrium)
     return (
-        #= γ      =# 2,
         #= high_ρ =# 1.42857142857e+4,
         #= low_ρ  =# 10000.,
         #= high_E =# 4.48657821135e+6,
@@ -88,7 +108,6 @@ end
 
 function init_test_params(p::Sedov)
     return (
-        #= γ      =# 7/5,
         #= high_ρ =# 1.,
         #= low_ρ  =# 1.,
         #= high_E =# 0.851072 / (π * p.r^2),
@@ -100,28 +119,46 @@ function init_test_params(p::Sedov)
     )
 end
 
+
+const BC_FreeFlow    = ( 1,  1)
+const BC_Dirichlet_X = (-1,  1)
+const BC_Dirichlet_Y = ( 1, -1)
+
+
 function boundaryCondition(side::Side, ::Sod)::NTuple{2, Int}
-    return (side == Left || side == Right) ? (-1, 1) : (1, 1)
+    return (side == Left || side == Right) ? BC_Dirichlet_X : BC_FreeFlow
 end
 
 function boundaryCondition(side::Side, ::Sod_y)::NTuple{2, Int}
-    return (side == Left || side == Right) ? (1, 1) : (1, -1)
+    return (side == Left || side == Right) ? BC_FreeFlow : BC_Dirichlet_Y
 end
 
 function boundaryCondition(side::Side, ::Sod_circ)::NTuple{2, Int}
-    return (side == Left || side == Right) ? (-1, 1) : (1, -1)
+    return (side == Left || side == Right) ? BC_Dirichlet_X : BC_Dirichlet_Y
 end
 
 function boundaryCondition(side::Side, ::Bizarrium)::NTuple{2, Int}
     if side == Left
-        return (-1, 1)
+        return BC_Dirichlet_X
     elseif side == Right
-        return (1, 1)
+        return BC_FreeFlow
     else
-        return (1, -1)
+        return BC_Dirichlet_Y
     end
 end
 
 function boundaryCondition(::Side, ::Sedov)::NTuple{2, Int}
-    return (1, 1)
+    return BC_FreeFlow
+end
+
+
+update_test_params(t::TestCase, ::Axis) = t
+
+
+const SourceTermType = @NamedTuple{ρ::T, u::T, E::T} where T
+
+
+# TODO: should be @kernel_function
+function source_term(::T, ::T, ::T, ::TestCase) where {T}
+    return (ρ = zero(T), u = zero(T), E = zero(T))
 end

@@ -199,6 +199,20 @@ end
 end
 
 
+@generic_kernel function cell_update_with_source!(
+    s::Int, dx::T, dt::T, 
+    ustar::V, pstar::V, x_::V, rho::V, u::V, Emat::V, test_case::Test
+) where {T, V <: AbstractArray{T}, Test <: TestCase}
+    i = @index_2D_lin()
+    Δx = dx + dt * (ustar[i+s] - ustar[i])  # Length of the lagrangian cell
+    source = source_term(x_[i] + Δx / 2, rho[i], u[i], test_case)::SourceTermType{T}
+    dm = rho[i] * dx
+    rho[i]   = dm / Δx                                                   + source.ρ * dt
+    u[i]    += dt / dm * (pstar[i]            - pstar[i+s]             ) + source.u * dt
+    Emat[i] += dt / dm * (pstar[i] * ustar[i] - pstar[i+s] * ustar[i+s]) + source.E * dt
+end
+
+
 @generic_kernel function euler_projection!(
     s::Int, dx::T, dt::T,
     ustar::V, rho::V, umat::V, vmat::V, Emat::V,
@@ -281,7 +295,7 @@ end
     x::V, y::V, rho::V, Emat::V, umat::V, vmat::V, 
     domain_mask::V, pmat::V, cmat::V, ustar::V, pstar::V, 
     test_case::Test, debug_indexes::Bool
-) where {T, V <: AbstractArray{T}, Test <: TwoStateTestCase}
+) where {T, V <: AbstractArray{T}, Test <: TestCase}
     @kernel_init begin
         (cx, cy) = cart_coords
         (g_nx, g_ny) = global_grid
@@ -292,11 +306,13 @@ end
         pos_x = cx * nx
         pos_y = cy * ny
 
-        (_,
-           high_ρ::T, low_ρ::T,
-           high_E::T, low_E::T,
-           high_u::T, low_u::T,
-           high_v::T, low_v::T) = init_test_params(test_case)
+        if Test isa TwoStateTestCase
+            (_,
+                high_ρ::T, low_ρ::T,
+                high_E::T, low_E::T,
+                high_u::T, low_u::T,
+                high_v::T, low_v::T) = init_test_params(test_case)::InitTestParamsTwoState{T}
+        end
     end
 
     i = @index_1D_lin()
@@ -319,16 +335,26 @@ end
         Emat[i] = i
         umat[i] = i
         vmat[i] = i
-    elseif test_region_high(x_mid, y_mid, test_case)
-        rho[i]  = high_ρ
-        Emat[i] = high_E
-        umat[i] = high_u
-        vmat[i] = high_v
     else
-        rho[i]  = low_ρ
-        Emat[i] = low_E
-        umat[i] = low_u
-        vmat[i] = low_v
+        if Test isa TwoStateTestCase
+            if test_region_high(x_mid, y_mid, test_case)
+                rho[i]  = high_ρ
+                Emat[i] = high_E
+                umat[i] = high_u
+                vmat[i] = high_v
+            else
+                rho[i]  = low_ρ
+                Emat[i] = low_E
+                umat[i] = low_u
+                vmat[i] = low_v
+            end
+        else
+            init_vals::InitTestParams{T} = init_test_params(x_mid, y_mid, test_case)
+            rho[i]  = init_vals.ρ
+            Emat[i] = init_vals.E
+            umat[i] = init_vals.u
+            vmat[i] = init_vals.v
+        end
     end
 
     # Set the domain mask to 1 if the cell is real or 0 otherwise
@@ -433,7 +459,12 @@ function cellUpdate!(params::ArmonParameters, data::ArmonDualData)
     range = params.steps_ranges.cell_update
     d_data = device(data)
     u = params.current_axis == X_axis ? d_data.umat : d_data.vmat
-    return cell_update!(params, d_data, range, params.cycle_dt, u)
+    x_ = params.current_axis == X_axis ? d_data.x : d_data.y
+    if has_source_term(params.test)
+        return cell_update_with_source!(params, d_data, range, params.cycle_dt, x_, u, params.test)
+    else
+        return cell_update!(params, d_data, range, params.cycle_dt, u)
+    end
 end
 
 
