@@ -42,7 +42,7 @@
 #ifdef CHECK_VIEW_ORDER
 #define CHECK_VIEW_LABEL(v) if (v.label() != #v) std::cerr << "wrong view order in " << __PRETTY_FUNCTION__ << " : " << #v << "\n"
 #else
-#define CHECK_VIEW_LABEL(v) do { } while (false)
+#define CHECK_VIEW_LABEL(v) void()
 #endif
 
 

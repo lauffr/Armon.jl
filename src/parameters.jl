@@ -97,6 +97,10 @@ mutable struct ArmonParameters{Flt_T, Device}
     # Misc.
     kokkos_project::Any
     kokkos_lib::Any
+
+    # TODO: empty inner constructor:
+    # ArmonParameters() = new()
+    # Then properly initialize the fields in the kwarg outer constructor
 end
 
 

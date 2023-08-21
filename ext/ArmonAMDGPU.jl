@@ -45,7 +45,7 @@ end
 
 
 #
-# Time step
+# Reductions
 #
 
 @kernel function dtCFL_reduction(dx, dy, out, umat, vmat, cmat, domain_mask)
@@ -68,6 +68,29 @@ function Armon.dtCFL_kernel(params::ArmonParameters{<:Any, <:ROCBackend}, data::
     KernelAbstractions.synchronize(params.device)
 
     return reduce(min, work_array_1)
+end
+
+
+@kernel function conservation_vars_reduction(out_mass, out_energy, rho, Emat, domain_mask)
+    Armon.@fast begin
+        i = @index(Global)
+        out_mass[i], out_energy[i] = Armon.conservation_vars_kernel_reduction(rho[i], Emat[i], domain_mask[i])
+    end
+end
+
+
+id2(a, b) = (a, b)
+
+
+function Armon.conservation_vars_kernel(params::ArmonParameters{T, <:ROCBackend}, data::ArmonData, _) where T
+    (; rho, Emat, domain_mask, work_array_1, work_array_2) = data
+
+    conservation_reduction_kernel = conservation_vars_reduction(params.device, params.block_size)
+    conservation_reduction_kernel(work_array_1, work_array_2, rho, Emat, domain_mask;
+        ndrange=(length(rho), 1, 1))
+    KernelAbstractions.synchronize(params.device)
+
+    return mapreduce(id2, .+, work_array_1, work_array_2; init=(zero(T), zero(T)))
 end
 
 end

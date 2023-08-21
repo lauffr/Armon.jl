@@ -69,7 +69,7 @@ ARMON_TRY {
 
         flt_t disp = dt * ustar[i];
         Idx is = i;
-        i -= (disp > 0) * s;
+        i -= Idx(disp > 0) * s;
 
         advection_rho[is]  = disp * (rho[i]          );
         advection_urho[is] = disp * (rho[i] * umat[i]);
