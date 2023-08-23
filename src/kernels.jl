@@ -306,12 +306,11 @@ end
         pos_x = cx * nx
         pos_y = cy * ny
 
-        if Test isa TwoStateTestCase
-            (_,
-                high_ρ::T, low_ρ::T,
-                high_E::T, low_E::T,
-                high_u::T, low_u::T,
-                high_v::T, low_v::T) = init_test_params(test_case)::InitTestParamsTwoState{T}
+        if Test <: TwoStateTestCase
+            (; high_ρ::T, low_ρ::T,
+               high_E::T, low_E::T,
+               high_u::T, low_u::T,
+               high_v::T, low_v::T) = init_test_params(test_case)::InitTestParamsTwoState{T}
         end
     end
 
@@ -336,7 +335,7 @@ end
         umat[i] = i
         vmat[i] = i
     else
-        if Test isa TwoStateTestCase
+        if Test <: TwoStateTestCase
             if test_region_high(x_mid, y_mid, test_case)
                 rho[i]  = high_ρ
                 Emat[i] = high_E

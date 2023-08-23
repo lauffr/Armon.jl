@@ -70,7 +70,14 @@ struct InitTestParamsTwoState{T}
     low_u::T
     high_v::T
     low_v::T
+
+    function InitTestParamsTwoState(;
+        high_ρ::T, low_ρ::T, high_E::T, low_E::T, high_u::T, low_u::T, high_v::T, low_v::T
+    ) where {T}
+        new{T}(high_ρ, low_ρ, high_E, low_E, high_u, low_u, high_v, low_v)
+    end
 end
+
 
 struct InitTestParams{T}
     ρ::T
@@ -81,41 +88,41 @@ end
 
 
 function init_test_params(::Union{Sod, Sod_y, Sod_circ})
-    return (
-        #= high_ρ =# 1.,
-        #= low_ρ  =# 0.125,
-        #= high_E =# 2.5,
-        #= low_E  =# 2.0,
-        #= high_u =# 0.,
-        #= low_u  =# 0.,
-        #= high_v =# 0.,
-        #= low_v  =# 0.
+    return InitTestParamsTwoState(
+        high_ρ = 1.,
+         low_ρ = 0.125,
+        high_E = 2.5,
+         low_E = 2.0,
+        high_u = 0.,
+         low_u = 0.,
+        high_v = 0.,
+         low_v = 0.
     )
 end
 
 function init_test_params(::Bizarrium)
-    return (
-        #= high_ρ =# 1.42857142857e+4,
-        #= low_ρ  =# 10000.,
-        #= high_E =# 4.48657821135e+6,
-        #= low_E  =# 0.5 * 250^2,
-        #= high_u =# 0.,
-        #= low_u  =# 250.,
-        #= high_v =# 0.,
-        #= low_v  =# 0.
+    return InitTestParamsTwoState(
+        high_ρ = 1.42857142857e+4,
+         low_ρ = 10000.,
+        high_E = 4.48657821135e+6,
+         low_E = 0.5 * 250^2,
+        high_u = 0.,
+         low_u = 250.,
+        high_v = 0.,
+         low_v = 0.
     )
 end
 
 function init_test_params(p::Sedov)
-    return (
-        #= high_ρ =# 1.,
-        #= low_ρ  =# 1.,
-        #= high_E =# 0.851072 / (π * p.r^2),
-        #= low_E  =# 2.5e-14,
-        #= high_u =# 0.,
-        #= low_u  =# 0.,
-        #= high_v =# 0.,
-        #= low_v  =# 0.
+    return InitTestParamsTwoState(
+        high_ρ = 1.,
+         low_ρ = 1.,
+        high_E = 0.851072 / (π * p.r^2),
+         low_E = 2.5e-14,
+        high_u = 0.,
+         low_u = 0.,
+        high_v = 0.,
+         low_v = 0.
     )
 end
 
