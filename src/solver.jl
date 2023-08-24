@@ -33,6 +33,12 @@ function solver_cycle(params::ArmonParameters, data::ArmonDualData)
         step_checkpoint(params, data, "EOS_init") && return true
     end
 
+    if params.async_comms && !haskey(params.tasks_storage, :lb)
+        params.tasks_storage[:lb] = nothing
+        params.tasks_storage[:rt] = nothing
+        params.tasks_storage[:inner] = nothing
+    end
+
     (@section "time_step" time_step(params, data)) && return true
 
     if params.cycle == 0
@@ -80,19 +86,19 @@ function solver_cycle(params::ArmonParameters, data::ArmonDualData)
             wait(params)
 
             @sync begin
-                @async begin
+                @reuse_tls params.tasks_storage[:lb] @async begin
                     @section "BC lb"     async=true boundaryConditions!(params, data, :outer_lb)
                     @section "fluxes lb" async=true numericalFluxes!(params, data, :outer_lb)
                     wait(params)  # We must wait for the CUDA/HIP stream to end before ending any task
                 end
 
-                @async begin
+                @reuse_tls params.tasks_storage[:rt] @async begin
                     @section "BC rt"     async=true boundaryConditions!(params, data, :outer_rt)
                     @section "fluxes rt" async=true numericalFluxes!(params, data, :outer_rt)
                     wait(params)
                 end
 
-                @async begin
+                @reuse_tls params.tasks_storage[:inner] @async begin
                     @section "fluxes"    async=true numericalFluxes!(params, data, :inner)
                     wait(params)
                 end

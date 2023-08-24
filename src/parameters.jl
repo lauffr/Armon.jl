@@ -68,6 +68,7 @@ mutable struct ArmonParameters{Flt_T, Device}
     use_kokkos::Bool
     device::Device  # A KernelAbstractions.Backend, Kokkos.ExecutionSpace or CPU_HP
     block_size::NTuple{3, Int}
+    tasks_storage::Dict{Symbol, Union{Nothing, IdDict}}
 
     # MPI
     use_MPI::Bool
@@ -349,6 +350,7 @@ function ArmonParameters(;
         return_data,
 
         use_threading, use_simd, use_gpu, use_kokkos, device, block_size,
+        Dict{Symbol, Union{Nothing, IdDict}}(),
 
         use_MPI, is_root, rank, root_rank,
         proc_size, (px, py), global_comm, C_COMM, (cx, cy), neighbours, (g_nx, g_ny),
