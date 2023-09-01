@@ -64,15 +64,18 @@ end
 function get_init_test_params(params::ArmonParameters, test_params_ptr::Ptr{Nothing}, len::Cint)
     test_params_ptr = Ptr{Armon.data_type(params)}(test_params_ptr)
 
-    test_params = Armon.init_test_params(params.test)
-    length(test_params) > len && error("the given array is not big enough, expected $(length(test_params)), got: $len")
+    test_params_t = Armon.InitTestParamsTwoState{Armon.data_type(params)}
+    fields = fieldcount(test_params_t)
+    fields > len && error("the given array is not big enough, expected $fields, got: $len")
 
-    for (i, p) in enumerate(test_params[2:end])
-        unsafe_store!(test_params_ptr, p, i)
+    test_params = Armon.init_test_params(params.test)::test_params_t
+
+    for i in 1:fields
+        unsafe_store!(test_params_ptr, getfield(test_params, i), i)
     end
 
     if params.test isa Sedov
-        unsafe_store!(test_params_ptr, params.test.r, length(test_params))
+        unsafe_store!(test_params_ptr, params.test.r, fields + 1)
     end
 
     return nothing
@@ -133,7 +136,7 @@ function Armon.device_memory_info(exec::Kokkos.ExecutionSpace)
             free  = UInt64(free)
         )
     elseif exec isa Kokkos.Serial || exec isa Kokkos.OpenMP
-        return Armon.device_memory_info(CPU_HP())
+        return Armon.device_memory_info(Armon.CPU_HP())
     else
         error("`device_memory_info` for $(Kokkos.main_space_type(exec)) NYI")
     end
