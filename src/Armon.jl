@@ -7,6 +7,7 @@ using KernelAbstractions
 using MPI
 using MacroTools
 using TimerOutputs
+using Preferences
 
 if !isdefined(Base, :get_extension)
     using Requires

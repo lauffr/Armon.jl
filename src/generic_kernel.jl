@@ -1,7 +1,7 @@
 
-const use_std_lib_threads = parse(Bool, get(ENV, "USE_STD_LIB_THREADS", "false"))
-const use_fast_math = parse(Bool, get(ENV, "ARMON_USE_FAST_MATH", "true"))
-const use_inbounds = parse(Bool, get(ENV, "ARMON_USE_INBOUNDS", "true"))
+const use_std_lib_threads = @load_preference("use_std_lib_threads", false)
+const use_fast_math = @load_preference("use_fast_math", true)
+const use_inbounds = @load_preference("use_inbounds", true)
 
 
 """
@@ -519,6 +519,7 @@ function make_kokkos_kernel_call(func_name, cpu_kernel_def, is_V_in_where, loop_
     kokkos_def[:args] = kernel_args
 
     # TODO: disabled since whereparams are evaluated immediately, therefore Kokkos is undefined
+    #  => replace with a typeassert in the function body?
     #=if is_V_in_where
         kokkos_def[:whereparams] = map(kokkos_def[:whereparams]) do where_p
             (where_p isa Expr && @capture(where_p, V <: AbstractArray{T})) || return where_p
