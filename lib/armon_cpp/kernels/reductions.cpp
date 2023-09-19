@@ -1,5 +1,6 @@
 
 #include "armon.h"
+#include "parallel_kernels.h"
 
 
 ARMON_EXPORT flt_t dt_CFL(
@@ -19,7 +20,7 @@ ARMON_TRY {
 
     flt_t dt = INFINITY;
 
-    Kokkos::parallel_reduce(range_type,
+    parallel_reduce_kernel(range_type, range_info,
     KOKKOS_LAMBDA(const UIdx lin_i, flt_t& dt_loop) {
         const Idx i = scale_index(lin_i, range_info);
         flt_t max_cx = Kokkos::max(Kokkos::abs(umat[i] + cmat[i]), Kokkos::abs(umat[i] - cmat[i])) * domain_mask[i];

@@ -1,5 +1,6 @@
 
 #include "armon.h"
+#include "parallel_kernels.h"
 
 
 ARMON_EXPORT void boundaryConditions(
@@ -21,7 +22,7 @@ ARMON_TRY {
 
     i_start += stride - 1;  // 0-index correction
 
-    Kokkos::parallel_for(range_type,
+    parallel_kernel(range_type, range_info,
     KOKKOS_LAMBDA(const UIdx lin_i) {
         Idx i = scale_index(lin_i, range_info);
 

@@ -1,5 +1,6 @@
 
 #include "armon.h"
+#include "parallel_kernels.h"
 
 
 ARMON_EXPORT void update_bizarrium_EOS(
@@ -23,7 +24,7 @@ ARMON_TRY {
     const flt_t rho0 = 1e4, K0 = 1e11, Cv0 = 1e3, T0 = 300, eps0 = 0;
     const flt_t G0 = 1.5, s = 1.5, q = -42080895./14941154., r = 727668333./149411540.;
 
-    Kokkos::parallel_for(range_type,
+    parallel_kernel(range_type, range_info,
     KOKKOS_LAMBDA(const UIdx lin_i) {
         const Idx i = scale_index(lin_i, range_info);
 

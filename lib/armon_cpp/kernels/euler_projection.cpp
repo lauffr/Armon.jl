@@ -1,5 +1,6 @@
 
 #include "armon.h"
+#include "parallel_kernels.h"
 
 
 ARMON_EXPORT void euler_projection(
@@ -24,7 +25,7 @@ ARMON_TRY {
     const Idx s = p.s();
     const flt_t dx = p.dx();
 
-    Kokkos::parallel_for(range_type,
+    parallel_kernel(range_type, range_info,
     KOKKOS_LAMBDA(const UIdx lin_i) {
         const Idx i = scale_index(lin_i, range_info);
 
@@ -63,7 +64,7 @@ ARMON_TRY {
 
     const Idx s = p.s();
 
-    Kokkos::parallel_for(range_type,
+    parallel_kernel(range_type, range_info,
     KOKKOS_LAMBDA(const UIdx lin_i) {
         Idx i = scale_index(lin_i, range_info);
 
@@ -109,7 +110,7 @@ ARMON_TRY {
     const Idx s = p.s();
     const flt_t dx = p.dx();
 
-    Kokkos::parallel_for(range_type,
+    parallel_kernel(range_type, range_info,
     KOKKOS_LAMBDA(const UIdx lin_i) {
         Idx i = scale_index(lin_i, range_info);
 

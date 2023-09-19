@@ -1,5 +1,6 @@
 
 #include "armon.h"
+#include "parallel_kernels.h"
 
 
 ARMON_EXPORT void update_perfect_gas_EOS(
@@ -21,7 +22,7 @@ ARMON_TRY {
     APPLY_6(CHECK_VIEW_LABEL, rho, umat, vmat, Emat, pmat, cmat);
     APPLY_1(CHECK_VIEW_LABEL, gmat);
 
-    Kokkos::parallel_for(range_type,
+    parallel_kernel(range_type, range_info,
     KOKKOS_LAMBDA(const UIdx lin_i) {
         const Idx i = scale_index(lin_i, range_info);
         flt_t e = Emat[i] - flt_t(0.5) * (Kokkos::pow(umat[i], flt_t(2)) + Kokkos::pow(vmat[i], flt_t(2)));
