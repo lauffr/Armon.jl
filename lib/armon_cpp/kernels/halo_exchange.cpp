@@ -1,6 +1,6 @@
 
-
 #include "armon.h"
+#include "parallel_kernels.h"
 
 
 ARMON_EXPORT void read_border_array(
@@ -25,7 +25,7 @@ ARMON_TRY {
 
     const Idx nghost = p.nghost();
 
-    Kokkos::parallel_for(range_type,
+    parallel_kernel(range_type, range_info,
     KOKKOS_LAMBDA(const UIdx lin_i) {
         const Idx idx = scale_index(lin_i, range_info);
         const Idx itr = static_cast<Idx>(lin_i);

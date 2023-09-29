@@ -8,6 +8,7 @@ set(CMAKE_CXX_FLAGS_RELEASE "-O3 -ffast-math")
 find_package(Kokkos REQUIRED)
 
 option(USE_SINGLE_PRECISION "Use 'float' instead of 'double'" OFF)
+option(USE_SIMD_KERNELS "Use team vector loops instead of normal loops" OFF)
 option(CHECK_VIEW_ORDER "Check if all kernels are called properly" OFF)
 option(TRY_ALL_CALLS "Surround all exported functions with a try-catch block" OFF)
 
@@ -16,6 +17,7 @@ add_library(armon_cpp SHARED
         indexing.h
         limiters.h
         utils.h
+        kernels/parallel_kernels.h
         kernels/acoustic.cpp
         kernels/perfect_gas_eos.cpp
         kernels/bizarrium_eos.cpp
@@ -33,6 +35,10 @@ target_compile_options(armon_cpp PRIVATE
 
 if (USE_SINGLE_PRECISION)
     target_compile_definitions(armon_cpp PRIVATE USE_SINGLE_PRECISION)
+endif()
+
+if (USE_SIMD_KERNELS)
+    target_compile_definitions(armon_cpp PRIVATE USE_SIMD_KERNELS)
 endif()
 
 if (CHECK_VIEW_ORDER)

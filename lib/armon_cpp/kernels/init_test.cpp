@@ -1,5 +1,6 @@
 
 #include "armon.h"
+#include "parallel_kernels.h"
 
 #include <variant>
 
@@ -98,7 +99,7 @@ void init_test(
     const flt_t ox = std::get<0>(p.origin());
     const flt_t oy = std::get<1>(p.origin());
 
-    Kokkos::parallel_for(range_type,
+    parallel_kernel(range_type, range_info,
     KOKKOS_LAMBDA(const UIdx lin_i) {
         const Idx i = scale_index(lin_i, range_info);
 
