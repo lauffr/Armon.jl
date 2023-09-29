@@ -150,6 +150,7 @@ function ArmonParameters(;
     min_nghost = 1
     min_nghost += (scheme != :Godunov)
     min_nghost += (projection == :euler_2nd)
+    min_nghost += (projection == :euler_2nd) && (scheme != :Godunov)
 
     if nghost < min_nghost
         solver_error(:config, "Not enough ghost cells for the scheme and/or projection, at least $min_nghost are needed.")
