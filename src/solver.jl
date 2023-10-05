@@ -29,6 +29,7 @@ end
 
 function solver_cycle(params::ArmonParameters, data::ArmonDualData)
     if params.cycle == 0
+        step_checkpoint(params, data, "init_test") && return true
         @section "EOS_init" update_EOS!(params, data, :full)
         step_checkpoint(params, data, "EOS_init") && return true
     end
@@ -40,10 +41,9 @@ function solver_cycle(params::ArmonParameters, data::ArmonDualData)
     end
 
     (@section "time_step" time_step(params, data)) && return true
+    @checkpoint("time_step") && return true
 
-    if params.cycle == 0
-        params.curr_cycle_dt = params.next_cycle_dt
-    end
+    @printf("Time steps for cycle %4d: current = %.18f, next = %.18f\n", params.cycle, params.curr_cycle_dt, params.next_cycle_dt)
 
     @section "$axis" for (axis, dt_factor) in split_axes(params)
         update_axis_parameters(params, axis)
@@ -104,17 +104,17 @@ function solver_cycle(params::ArmonParameters, data::ArmonDualData)
                 end
             end
 
-            @checkpoint("numericalFluxes") && return true
+            @checkpoint("numerical_fluxes") && return true
         else
             @section "BC" boundaryConditions!(params, data)
-            @checkpoint("boundaryConditions") && return true
+            @checkpoint("boundary_conditions") && return true
 
             @section "fluxes" numericalFluxes!(params, data, :full)
-            @checkpoint("numericalFluxes") && return true
+            @checkpoint("numerical_fluxes") && return true
         end
 
         @section "update" cellUpdate!(params, data)
-        @checkpoint("cellUpdate") && return true
+        @checkpoint("cell_update") && return true
 
         @section "remap" projection_remap!(params, data)
         @checkpoint("projection_remap") && return true
@@ -131,6 +131,7 @@ function time_loop(params::ArmonParameters, data::ArmonDualData)
     params.time = 0
     params.curr_cycle_dt = 0
     params.next_cycle_dt = 0
+    update_axis_parameters(params, X_axis)
 
     total_cycles_time = 0.
 

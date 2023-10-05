@@ -166,6 +166,28 @@ function read_sub_domain_file!(params::ArmonParameters, data::ArmonDataOrDual, f
     end
 end
 
+
+function write_time_step_file(params::ArmonParameters, file_name::String)
+    file_path = build_file_path(params, file_name)
+
+    p = params.output_precision
+    format = Printf.Format("%#$(p+7).$(p)e\n")
+
+    open(file_path, "w") do file
+        Printf.format(file, format, params.curr_cycle_dt)
+    end
+end
+
+
+function read_time_step_file(params::ArmonParameters{T}, file_name::String) where {T}
+    file_path = build_file_path(params, file_name)
+
+    open(file_path, "r") do file
+        return parse(T, readchomp(file))
+    end
+end
+
+
 #
 # Comparison functions
 #
@@ -255,16 +277,29 @@ function step_checkpoint(params::ArmonParameters, data::ArmonDualData, step_labe
         h_data = host(data)
 
         step_file_name = params.output_file * @sprintf("_%03d_%s", params.cycle, step_label)
-        step_file_name *= isnothing(params.axis) ? "" : "_" * string(params.axis)[1:1]
+        step_file_name *= "_" * string(params.current_axis)[1]
 
         if params.is_ref
-            write_sub_domain_file(params, h_data, step_file_name; no_msg=true)
+            if step_label == "time_step"
+                write_time_step_file(params, step_file_name)
+            else
+                write_sub_domain_file(params, h_data, step_file_name; no_msg=true)
+            end
         else
-            different = compare_with_file(params, h_data, step_file_name, step_label)
+            if step_label == "time_step"
+                ref_dt = read_time_step_file(params, step_file_name)
+                different = isapprox(ref_dt, params.curr_cycle_dt; atol=params.comparison_tolerance)
+                @printf("Time step difference: ref Δt = %.18f, Δt = %.18f, diff = %.18f\n",
+                        ref_dt, params.curr_cycle_dt, ref_dt - params.curr_cycle_dt)
+            else
+                different = compare_with_file(params, h_data, step_file_name, step_label)
+            end
+
             if different
                 write_sub_domain_file(params, h_data, step_file_name * "_diff"; no_msg=true)
                 println("Difference file written to $(step_file_name)_diff")
             end
+
             return different
         end
     end

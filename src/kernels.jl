@@ -501,19 +501,6 @@ function projection_remap!(params::ArmonParameters, data::ArmonDualData)
 end
 
 
-function dtCFL_kernel(::ArmonParameters{T, CPU_HP}, data::ArmonData, range, dx, dy) where T
-    (; cmat, umat, vmat, domain_mask) = data
-
-    @batch threadlocal=typemax(T) for i in range
-        dt_x = dx / (max(abs(umat[i] + cmat[i]), abs(umat[i] - cmat[i])) * domain_mask[i])
-        dt_y = dy / (max(abs(vmat[i] + cmat[i]), abs(vmat[i] - cmat[i])) * domain_mask[i])
-        threadlocal = min(threadlocal, dt_x, dt_y)
-    end
-
-    return minimum(threadlocal)
-end
-
-
 @inline @fast function dtCFL_kernel_reduction(u::T, v::T, c::T, mask::T, dx::T, dy::T) where T
     # We need the absolute value of the divisor since the result of the max can be negative,
     # because of some IEEE 754 non-compliance since fast math is enabled when compiling this code
@@ -523,6 +510,18 @@ end
         dx / abs(max(abs(u + c), abs(u - c)) * mask),
         dy / abs(max(abs(v + c), abs(v - c)) * mask)
     )
+end
+
+
+function dtCFL_kernel(::ArmonParameters{T, CPU_HP}, data::ArmonData, range, dx, dy) where T
+    (; cmat, umat, vmat, domain_mask) = data
+
+    @batch threadlocal=typemax(T) for i in range
+        min_dt = dtCFL_kernel_reduction(umat[i], vmat[i], cmat[i], domain_mask[i], dx, dy)
+        threadlocal = min(threadlocal, min_dt)
+    end
+
+    return minimum(threadlocal)
 end
 
 
@@ -588,6 +587,10 @@ function time_step(params::ArmonParameters, data::ArmonDualData)
         params.next_cycle_dt = next_dt
     else
         params.next_cycle_dt = params.curr_cycle_dt
+    end
+
+    if params.cycle == 0
+        params.curr_cycle_dt = params.next_cycle_dt
     end
 
     return false
