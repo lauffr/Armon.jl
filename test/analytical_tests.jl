@@ -57,7 +57,7 @@ Base.show(io::IO, ::AnalyticalGravity2D) = print(io, "Gravity 2D")
 Base.show(io::IO, ::AnalyticalFriction)  = print(io, "Friction")
 
 
-function Armon.boundaryCondition(side::Armon.Side, ::AnalyticTestCase)::NTuple{2, Int}
+function Armon.boundary_condition(side::Armon.Side, ::AnalyticTestCase)::NTuple{2, Int}
     return (side == Armon.Left || side == Armon.Right) ? Armon.BC_Dirichlet_X : Armon.BC_Dirichlet_Y
 end
 

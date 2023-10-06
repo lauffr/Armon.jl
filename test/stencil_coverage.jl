@@ -14,28 +14,28 @@ kernel_calls = [
         type_args=Dict{Symbol, Any}(:V => AbstractArray)),
     (p) -> kernel_stencil(p, Armon.acoustic_GAD!; 
         type_args=Dict{Symbol, Any}(:T => Float64, :LimiterType => Armon.MinmodLimiter)),
-    (p) -> kernel_stencil(p, Armon.update_perfect_gas_EOS!;
+    (p) -> kernel_stencil(p, Armon.perfect_gas_EOS!;
         type_args=Dict{Symbol, Any}(:T => Float64)),
-    (p) -> kernel_stencil(p, Armon.update_bizarrium_EOS!;
+    (p) -> kernel_stencil(p, Armon.bizarrium_EOS!;
         type_args=Dict{Symbol, Any}(:T => Float64)),
     (p) -> kernel_stencil(p, Armon.cell_update!;
         type_args=Dict{Symbol, Any}(:T => Float64)),
     (p) -> kernel_stencil(p, Armon.euler_projection!;
         type_args=Dict{Symbol, Any}(:T => Float64)),
-    (p) -> kernel_stencil(p, Armon.first_order_euler_remap!;
+    (p) -> kernel_stencil(p, Armon.advection_first_order!;
         type_args=Dict{Symbol, Any}(:T => Float64)),
-    (p) -> kernel_stencil(p, Armon.second_order_euler_remap!;
+    (p) -> kernel_stencil(p, Armon.advection_second_order!;
         type_args=Dict{Symbol, Any}(:T => Float64)),
-    (p) -> kernel_stencil(p, Armon.boundaryConditions!;
+    (p) -> kernel_stencil(p, Armon.boundary_conditions!;
         args=Dict{Symbol, Any}(:stride => p.row_length, :i_start => lin_idx(p, 0, 1)-p.row_length, :d => 1),
         type_args=Dict{Symbol, Any}(:T => Float64)),
-    (p) -> kernel_stencil(p, Armon.boundaryConditions!;
+    (p) -> kernel_stencil(p, Armon.boundary_conditions!;
         args=Dict{Symbol, Any}(:stride => p.row_length, :i_start => lin_idx(p, p.nx+1, 1)-p.row_length, :d => -1),
         type_args=Dict{Symbol, Any}(:T => Float64)),
-    (p) -> kernel_stencil(p, Armon.boundaryConditions!;
+    (p) -> kernel_stencil(p, Armon.boundary_conditions!;
         args=Dict{Symbol, Any}(:stride => 1, :i_start => lin_idx(p, 1, p.ny+1)-1, :d => -p.row_length),
         type_args=Dict{Symbol, Any}(:T => Float64)),
-    (p) -> kernel_stencil(p, Armon.boundaryConditions!;
+    (p) -> kernel_stencil(p, Armon.boundary_conditions!;
         args=Dict{Symbol, Any}(:stride => 1, :i_start => lin_idx(p, 1, 0)-1, :d => p.row_length),
         type_args=Dict{Symbol, Any}(:T => Float64)),
     (p) -> kernel_stencil(p, Armon.read_border_array!;
@@ -51,16 +51,16 @@ kernel_calls = [
 kernel_names = [
     "acoustic!",
     "acoustic_GAD!",
-    "update_perfect_gas_EOS!",
-    "update_bizarrium_EOS!",
+    "perfect_gas_EOS!",
+    "bizarrium_EOS!",
     "cell_update!",
     "euler_projection!",
-    "first_order_euler_remap!",
-    "second_order_euler_remap!",
-    "boundaryConditions!_left",
-    "boundaryConditions!_right",
-    "boundaryConditions!_top",
-    "boundaryConditions!_bottom",
+    "advection_first_order!",
+    "advection_second_order!",
+    "boundary_conditions!_left",
+    "boundary_conditions!_right",
+    "boundary_conditions!_top",
+    "boundary_conditions!_bottom",
     "read_border_array!",
     "write_border_array!",
     "init_test",
@@ -136,9 +136,9 @@ function build_kernel_hiearchy()
 
     steps = [
         (d, drs) -> (Armon.update_EOS!, Armon.update_EOS!(params, d, :full)),
-        (d, drs) -> (Armon.boundaryConditions!, Armon.boundaryConditions!(params, d, host_array)),
-        (d, drs) -> (Armon.numericalFluxes!, Armon.numericalFluxes!(params, d, :full)),
-        (d, drs) -> (Armon.cellUpdate!, Armon.cellUpdate!(params, d)),
+        (d, drs) -> (Armon.boundary_conditions!, Armon.boundary_conditions!(params, d, host_array)),
+        (d, drs) -> (Armon.numerical_fluxes!, Armon.numerical_fluxes!(params, d, :full)),
+        (d, drs) -> (Armon.cell_update!, Armon.cell_update!(params, d)),
         (d, drs) -> (Armon.projection_remap!, Armon.projection_remap!(params, d, host_array)),
     ]
 
@@ -202,9 +202,9 @@ function compute_kernel_ranges(scheme::Symbol = :GAD, projection::Symbol = :eule
 
     steps = [
         d -> (Armon.update_EOS!, Armon.update_EOS!(params, d, :test)),
-        d -> (Armon.boundaryConditions!, Armon.boundaryConditions!(params, d, host_array)),
-        d -> (Armon.numericalFluxes!, Armon.numericalFluxes!(params, d, :test)),
-        d -> (Armon.cellUpdate!, Armon.cellUpdate!(params, d)),
+        d -> (Armon.boundary_conditions!, Armon.boundary_conditions!(params, d, host_array)),
+        d -> (Armon.numerical_fluxes!, Armon.numerical_fluxes!(params, d, :test)),
+        d -> (Armon.cell_update!, Armon.cell_update!(params, d)),
         d -> (
             Armon.projection_remap!, 
             (

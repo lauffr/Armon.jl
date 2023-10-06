@@ -87,33 +87,33 @@ function solver_cycle(params::ArmonParameters, data::ArmonDualData)
 
             @sync begin
                 @reuse_tls params.tasks_storage[:lb] @async begin
-                    @section "BC lb"     async=true boundaryConditions!(params, data, :outer_lb)
-                    @section "fluxes lb" async=true numericalFluxes!(params, data, :outer_lb)
+                    @section "BC lb"     async=true boundary_conditions!(params, data, :outer_lb)
+                    @section "fluxes lb" async=true numerical_fluxes!(params, data, :outer_lb)
                     wait(params)  # We must wait for the CUDA/HIP stream to end before ending any task
                 end
 
                 @reuse_tls params.tasks_storage[:rt] @async begin
-                    @section "BC rt"     async=true boundaryConditions!(params, data, :outer_rt)
-                    @section "fluxes rt" async=true numericalFluxes!(params, data, :outer_rt)
+                    @section "BC rt"     async=true boundary_conditions!(params, data, :outer_rt)
+                    @section "fluxes rt" async=true numerical_fluxes!(params, data, :outer_rt)
                     wait(params)
                 end
 
                 @reuse_tls params.tasks_storage[:inner] @async begin
-                    @section "fluxes"    async=true numericalFluxes!(params, data, :inner)
+                    @section "fluxes"    async=true numerical_fluxes!(params, data, :inner)
                     wait(params)
                 end
             end
 
             @checkpoint("numerical_fluxes") && return true
         else
-            @section "BC" boundaryConditions!(params, data)
+            @section "BC" boundary_conditions!(params, data)
             @checkpoint("boundary_conditions") && return true
 
-            @section "fluxes" numericalFluxes!(params, data, :full)
+            @section "fluxes" numerical_fluxes!(params, data, :full)
             @checkpoint("numerical_fluxes") && return true
         end
 
-        @section "update" cellUpdate!(params, data)
+        @section "update" cell_update!(params, data)
         @checkpoint("cell_update") && return true
 
         @section "remap" projection_remap!(params, data)

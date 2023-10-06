@@ -132,19 +132,19 @@ const BC_Dirichlet_X = (-1,  1)
 const BC_Dirichlet_Y = ( 1, -1)
 
 
-function boundaryCondition(side::Side, ::Sod)::NTuple{2, Int}
+function boundary_condition(side::Side, ::Sod)::NTuple{2, Int}
     return (side == Left || side == Right) ? BC_Dirichlet_X : BC_FreeFlow
 end
 
-function boundaryCondition(side::Side, ::Sod_y)::NTuple{2, Int}
+function boundary_condition(side::Side, ::Sod_y)::NTuple{2, Int}
     return (side == Left || side == Right) ? BC_FreeFlow : BC_Dirichlet_Y
 end
 
-function boundaryCondition(side::Side, ::Sod_circ)::NTuple{2, Int}
+function boundary_condition(side::Side, ::Sod_circ)::NTuple{2, Int}
     return (side == Left || side == Right) ? BC_Dirichlet_X : BC_Dirichlet_Y
 end
 
-function boundaryCondition(side::Side, ::Bizarrium)::NTuple{2, Int}
+function boundary_condition(side::Side, ::Bizarrium)::NTuple{2, Int}
     if side == Left
         return BC_Dirichlet_X
     elseif side == Right
@@ -154,7 +154,7 @@ function boundaryCondition(side::Side, ::Bizarrium)::NTuple{2, Int}
     end
 end
 
-function boundaryCondition(::Side, ::Sedov)::NTuple{2, Int}
+function boundary_condition(::Side, ::Sedov)::NTuple{2, Int}
     return BC_FreeFlow
 end
 

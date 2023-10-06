@@ -27,69 +27,6 @@ end
 ) where {T, V <: AbstractArray{T}, LimiterType <: Limiter}
     i = @index_2D_lin()
 
-#=
-    ρᵢ₋₂ₛ = rho[i-2s]
-    ρᵢ₋ₛ  = rho[i-s]
-    ρᵢ    = rho[i]
-    ρᵢ₊ₛ  = rho[i+s]
-
-    cᵢ₋₂ₛ = cmat[i-2s]
-    cᵢ₋ₛ  = cmat[i-s]
-    cᵢ    = cmat[i]
-    cᵢ₊ₛ  = cmat[i+s]
-
-    uᵢ₋₂ₛ = u[i-2s]
-    uᵢ₋ₛ  = u[i-s]
-    uᵢ    = u[i]
-    uᵢ₊ₛ  = u[i+s]
-
-    pᵢ₋₂ₛ = pmat[i-2s]
-    pᵢ₋ₛ  = pmat[i-s]
-    pᵢ    = pmat[i]
-    pᵢ₊ₛ  = pmat[i+s]
-
-    # First order acoustic solver on the left cell
-    ustar_i₋, pstar_i₋ = acoustic_Godunov(
-        ρᵢ₋ₛ, ρᵢ₋₂ₛ, cᵢ₋ₛ, cᵢ₋₂ₛ,
-        uᵢ₋ₛ, uᵢ₋₂ₛ, pᵢ₋ₛ, pᵢ₋₂ₛ
-    )
-
-    # First order acoustic solver on the current cell
-    ustar_i, pstar_i = acoustic_Godunov(
-        ρᵢ, ρᵢ₋ₛ, cᵢ, cᵢ₋ₛ,
-        uᵢ, uᵢ₋ₛ, pᵢ, pᵢ₋ₛ
-    )
-
-    # First order acoustic solver on the right cell
-    ustar_i₊, pstar_i₊ = acoustic_Godunov(
-        ρᵢ₊ₛ, ρᵢ, cᵢ₊ₛ, cᵢ,
-        uᵢ₊ₛ, uᵢ, pᵢ₊ₛ, pᵢpara
-    )
-
-    # Second order GAD acoustic solver on the current cell
-
-    r_u₋ = (ustar_i₊ - uᵢ) / (ustar_i - uᵢ₋ₛ + T(1e-6))
-    r_p₋ = (pstar_i₊ - pᵢ) / (pstar_i - pᵢ₋ₛ + T(1e-6))
-    r_u₊ = (uᵢ₋ₛ - ustar_i₋) / (uᵢ - ustar_i + T(1e-6))
-    r_p₊ = (pᵢ₋ₛ - pstar_i₋) / (pᵢ - pstar_i + T(1e-6))
-
-    r_u₋ = limiter(r_u₋, LimiterType())
-    r_p₋ = limiter(r_p₋, LimiterType())
-    r_u₊ = limiter(r_u₊, LimiterType())
-    r_p₊ = limiter(r_p₊, LimiterType())
-
-    dm_l = ρᵢ₋ₛ * dx
-    dm_r = ρᵢ   * dx
-    Dm   = (dm_l + dm_r) / 2
-
-    rc_l = ρᵢ₋ₛ * cᵢ₋ₛ
-    rc_r = ρᵢ   * cᵢ
-    θ    = T(0.5) * (1 - (rc_l + rc_r) / 2 * (dt / Dm))
-
-    ustar[i] = ustar_i + θ * (r_u₊ * (uᵢ - ustar_i) - r_u₋ * (ustar_i - uᵢ₋ₛ))
-    pstar[i] = pstar_i + θ * (r_p₊ * (pᵢ - pstar_i) - r_p₋ * (pstar_i - pᵢ₋ₛ))
-=#
-
     # First order acoustic solver on the left cell
     ustar_i₋, pstar_i₋ = acoustic_Godunov(
         rho[i-s], rho[i-2s], cmat[i-s], cmat[i-2s],
@@ -133,7 +70,7 @@ end
 end
 
 
-@generic_kernel function update_perfect_gas_EOS!(
+@generic_kernel function perfect_gas_EOS!(
     gamma::T, 
     rho::V, Emat::V, umat::V, vmat::V, pmat::V, cmat::V, gmat::V
 ) where {T, V <: AbstractArray{T}}
@@ -145,7 +82,7 @@ end
 end
 
 
-@generic_kernel function update_bizarrium_EOS!(
+@generic_kernel function bizarrium_EOS!(
     rho::V, umat::V, vmat::V, Emat::V, pmat::V, cmat::V, gmat::V
 ) where {T, V <: AbstractArray{T}}
     i = @index_2D_lin()
@@ -234,7 +171,7 @@ end
 end
 
 
-@generic_kernel function first_order_euler_remap!(
+@generic_kernel function advection_first_order!(
     s::Int, dt::T,
     ustar::V, rho::V, umat::V, vmat::V, Emat::V,
     advection_ρ::V, advection_uρ::V, advection_vρ::V, advection_Eρ::V
@@ -253,7 +190,7 @@ end
 end
 
 
-@generic_kernel function second_order_euler_remap!(
+@generic_kernel function advection_second_order!(
     s::Int, dx::T, dt::T,
     ustar::V, rho::V, umat::V, vmat::V, Emat::V,
     advection_ρ::V, advection_uρ::V, advection_vρ::V, advection_Eρ::V
@@ -371,7 +308,7 @@ end
 # Wrappers
 #
 
-function numericalFluxes!(
+function numerical_fluxes!(
     params::ArmonParameters, data::ArmonDualData, 
     range::DomainRange, label::Symbol
 )
@@ -392,7 +329,7 @@ function numericalFluxes!(
 end
 
 
-function numericalFluxes!(params::ArmonParameters, data::ArmonDualData, label::Symbol)
+function numerical_fluxes!(params::ArmonParameters, data::ArmonDualData, label::Symbol)
     (; steps_ranges) = params
 
     if label == :inner
@@ -411,18 +348,18 @@ function numericalFluxes!(params::ArmonParameters, data::ArmonDualData, label::S
         solver_error(:config, "Wrong region label: $label")
     end
 
-    return numericalFluxes!(params, data, range, label)
+    return numerical_fluxes!(params, data, range, label)
 end
 
 
 function update_EOS!(params::ArmonParameters, data::ArmonData, ::TestCase, range::DomainRange)
     gamma = data_type(params)(7/5)
-    return update_perfect_gas_EOS!(params, data, range, gamma)
+    return perfect_gas_EOS!(params, data, range, gamma)
 end
 
 
 function update_EOS!(params::ArmonParameters, data::ArmonData, ::Bizarrium, range::DomainRange)
-    return update_bizarrium_EOS!(params, data, range)
+    return bizarrium_EOS!(params, data, range)
 end
 
 
@@ -454,7 +391,7 @@ function init_test(params::ArmonParameters, data::ArmonDualData)
 end
 
 
-function cellUpdate!(params::ArmonParameters, data::ArmonDualData)
+function cell_update!(params::ArmonParameters, data::ArmonDualData)
     range = params.steps_ranges.cell_update
     d_data = device(data)
     u = params.current_axis == X_axis ? d_data.umat : d_data.vmat
@@ -487,10 +424,10 @@ function projection_remap!(params::ArmonParameters, data::ArmonDualData)
     projection_range = params.steps_ranges.projection
 
     @section "Advection" if params.projection == :euler
-        first_order_euler_remap!(params, d_data, advection_range, params.cycle_dt,
+        advection_first_order!(params, d_data, advection_range, params.cycle_dt,
             advection_ρ, advection_uρ, advection_vρ, advection_Eρ)
     elseif params.projection == :euler_2nd
-        second_order_euler_remap!(params, d_data, advection_range, params.cycle_dt,
+        advection_second_order!(params, d_data, advection_range, params.cycle_dt,
             advection_ρ, advection_uρ, advection_vρ, advection_Eρ)
     else
         solver_error(:config, "Unknown projection scheme: $(params.projection)")
