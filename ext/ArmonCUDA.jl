@@ -6,11 +6,7 @@ using KernelAbstractions
 import CUDA: CUDABackend
 
 
-function Armon.init_device(::Val{:CUDA}, _)
-    return CUDABackend()
-end
-
-
+Armon.create_device(::Val{:CUDA}) = CUDABackend()
 Armon.device_array_type(::CUDABackend) = CUDA.CuArray
 
 

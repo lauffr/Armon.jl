@@ -7,11 +7,7 @@ using KernelAbstractions
 import AMDGPU: ROCBackend
 
 
-function Armon.init_device(::Val{:ROCM}, _)
-    return ROCBackend()
-end
-
-
+Armon.create_device(::Val{:ROCM}) = ROCBackend()
 Armon.device_array_type(::ROCBackend) = AMDGPU.ROCArray
 
 

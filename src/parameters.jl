@@ -1,5 +1,9 @@
 
-mutable struct ArmonParameters{Flt_T, Device}
+abstract type BackendParams end
+struct EmptyParams <: BackendParams end
+
+
+mutable struct ArmonParameters{Flt_T, Device, DeviceParams}
     # Test problem type, riemann solver and solver scheme
     test::TestCase
     riemann::Symbol
@@ -67,6 +71,7 @@ mutable struct ArmonParameters{Flt_T, Device}
     use_gpu::Bool
     use_kokkos::Bool
     device::Device  # A KernelAbstractions.Backend, Kokkos.ExecutionSpace or CPU_HP
+    backend_options::DeviceParams
     block_size::NTuple{3, Int}
     tasks_storage::Dict{Symbol, Union{Nothing, IdDict}}
 
@@ -95,69 +100,193 @@ mutable struct ArmonParameters{Flt_T, Device}
     initial_mass::Flt_T
     initial_energy::Flt_T
 
-    # Misc.
-    kokkos_project::Any
-    kokkos_lib::Any
+    function ArmonParameters(; ieee_bits = 64, nx = 10, ny = 10, options...)
+        flt_type = (ieee_bits == 64) ? Float64 : Float32
+        device, options = get_device(; options...)
 
-    # TODO: empty inner constructor:
-    # ArmonParameters() = new()
-    # Then properly initialize the fields in the kwarg outer constructor
+        params = new{flt_type, typeof(device), Any}()
+        params.nx = nx
+        params.ny = ny
+        params.device = device
+
+        # Each initialization step consumes the options it needs. At the end no option should remain.
+        # This allows to easily add new options, as well as for backends to have their own custom
+        # set of options.
+        options = init_scheme(params; options...)
+        options = init_test(params; options...)
+        options = init_MPI(params; options...)
+        options = init_device(params; options...)
+        options = init_profiling(params; options...)
+        options = init_indexing(params; options...)
+        options = init_output(params; options...)
+        options = init_solver_state(params; options...)
+        options = init_backend(params, params.device; options...)
+
+        if !isempty(options)
+            invalid_options = join(map(k -> "'$k'", keys(options)), ", ", " and ")
+            error("$(length(options)) unconsumed options:\n$invalid_options")
+        end
+
+        for field in fieldnames(typeof(params))
+            isdefined(params, field) && continue
+            error("Uninitialized field: $field")
+        end
+
+        update_axis_parameters(params, first(split_axes(params))[1])
+        update_steps_ranges(params)
+
+        # TODO: this is ugly, but allows to circumvent a circular dependency between `init_device`,
+        # `ArmonParameters` and the Kokkos backend of `@generic_kernel`: this way we can access the
+        # index type from the `@generated` function without relying on external functions.
+        complete_params = new{flt_type, typeof(device), typeof(params.backend_options)}()
+        for field in fieldnames(typeof(params))
+            setfield!(complete_params, field, getfield(params, field))
+        end
+
+        return complete_params
+    end
 end
 
 
-# Constructor for ArmonParameters
-function ArmonParameters(;
-        ieee_bits = 64,
-        test = :Sod, riemann = :acoustic, scheme = :GAD, projection = :euler,
-        riemann_limiter = :minmod,
-        nghost = 2, nx = 10, ny = 10, stencil_width = nothing,
-        domain_size = nothing, origin = nothing,
-        cfl = 0., Dt = 0., cst_dt = false, dt_on_even_cycles = false,
-        axis_splitting = :Sequential,
-        maxtime = 0, maxcycle = 500_000,
-        silent = 0, output_dir = ".", output_file = "output",
-        write_output = false, write_ghosts = false, write_slices = false, output_precision = nothing,
-        animation_step = 0,
-        measure_time = true, time_async = true, profiling = Symbol[],
-        use_threading = true, use_simd = true,
-        use_gpu = false, device = :CUDA, block_size = 1024,
-        use_kokkos = false, cmake_options = [], kokkos_options = nothing,
-        use_MPI = true, px = 1, py = 1, reorder_grid = true, global_comm = nothing,
-        async_comms = false,
-        compare = false, is_ref = false, comparison_tolerance = 1e-10, debug_indexes = false,
-        check_result = false,
-        return_data = false
-    )
+function get_device(; device = :CUDA, options...)
+    use_kokkos = get(options, :use_kokkos, false)
+    use_gpu = get(options, :use_gpu, false)
 
-    flt_type = (ieee_bits == 64) ? Float64 : Float32
-
-    if isnothing(output_precision)
-        output_precision = flt_type == Float64 ? 17 : 9  # Exact output by default
+    if use_kokkos
+        device_tag = Val(:Kokkos)
+    elseif use_gpu
+        device_tag = Val(device)
+    else
+        device_tag = Val(:CPU_HP)
     end
 
-    # Make sure that all floating point types are the same
-    cfl = flt_type(cfl)
-    Dt = flt_type(Dt)
-    maxtime = flt_type(maxtime)
+    return create_device(device_tag), options
+end
 
-    domain_size = isnothing(domain_size) ? nothing : Tuple(flt_type.(domain_size))
-    origin = isnothing(origin) ? nothing : Tuple(flt_type.(origin))
 
-    if cst_dt && Dt == zero(flt_type)
-        solver_error(:config, "Dt == 0 with constant step enabled")
+function init_MPI(params::ArmonParameters;
+    use_MPI = true, px = 1, py = 1, reorder_grid = true, global_comm = nothing,
+    options...
+)
+    global_comm = something(global_comm, MPI.COMM_WORLD)
+    params.global_comm = global_comm
+
+    (; nx, ny) = params
+    if (nx % px != 0) || (ny % py != 0)
+        solver_error(:config, "The dimensions of the global domain ($nx x $ny) are not divisible by the number of processors ($px x $py)")
     end
 
+    if use_MPI
+        !MPI.Initialized() && solver_error(:config, "'use_MPI=true' but MPI has not yet been initialized")
+
+        params.rank = MPI.Comm_rank(global_comm)
+        params.proc_size = MPI.Comm_size(global_comm)
+        params.proc_dims = (px, py)
+
+        # Create a cartesian grid communicator of px × py processes. reorder=true can be very
+        # important for performance since it will optimize the layout of the processes.
+        C_COMM = MPI.Cart_create(global_comm, [Int32(px), Int32(py)], [Int32(0), Int32(0)], reorder_grid)
+        params.cart_comm = C_COMM
+        params.cart_coords = MPI.Cart_coords(C_COMM)
+
+        params.neighbours = Dict(
+            Left   => MPI.Cart_shift(C_COMM, 0, -1)[2],
+            Right  => MPI.Cart_shift(C_COMM, 0,  1)[2],
+            Bottom => MPI.Cart_shift(C_COMM, 1, -1)[2],
+            Top    => MPI.Cart_shift(C_COMM, 1,  1)[2]
+        )
+    else
+        params.rank = 0
+        params.proc_size = 1
+        params.proc_dims = (px, py)
+        params.cart_comm = global_comm
+        params.cart_coords = (0, 0)
+        params.neighbours = Dict(
+            Left   => MPI.PROC_NULL,
+            Right  => MPI.PROC_NULL,
+            Bottom => MPI.PROC_NULL,
+            Top    => MPI.PROC_NULL
+        )
+    end
+
+    params.root_rank = 0
+    params.is_root = params.rank == params.root_rank
+
+    return options
+end
+
+
+function init_device(params::ArmonParameters;
+    async_comms = false,
+    use_threading = true, use_simd = true,
+    use_gpu = false, use_kokkos = false,
+    block_size = 1024,
+    options...
+)
+    if async_comms && !use_gpu && !use_kokkos
+        @warn "Asynchronous communications only work when using a GPU, or with a multithreading \
+               backend which supports tasking." maxlog=1
+    end
+
+    if async_comms && use_kokkos
+        @warn "Asynchronous communications with Kokkos NYI" maxlog=1
+    end
+
+    params.async_comms = async_comms
+    params.use_threading = use_threading
+    params.use_simd = use_simd
+    params.use_kokkos = use_kokkos
+    params.use_gpu = use_gpu
+
+    length(block_size) > 3 && solver_error(:config, "Expected `block_size` to contain up to 3 elements, got: $block_size")
+    params.block_size = tuple(block_size..., ntuple(Returns(1), 3 - length(block_size))...)
+
+    params.tasks_storage = Dict{Symbol, Union{Nothing, IdDict}}()
+
+    return options
+end
+
+
+function init_profiling(params::ArmonParameters;
+    profiling = Symbol[], measure_time = true, time_async = true,
+    options...
+)
+    params.profiling_info = Set{Symbol}(profiling)
+    measure_time && push!(params.profiling_info, :TimerOutputs)
+    params.enable_profiling = !isempty(params.profiling_info)
+
+    missing_prof = setdiff(params.profiling_info, (cb.name for cb in Armon.SECTION_PROFILING_CALLBACKS))
+    setdiff!(missing_prof, (cb.name for cb in Armon.KERNEL_PROFILING_CALLBACKS))
+    if !isempty(missing_prof)
+        solver_error(:config, "Unknown profiler$(length(missing_prof) > 1 ? "s" : ""): " * join(missing_prof, ", "))
+    end
+
+    params.measure_time = measure_time
+    params.time_async = time_async
+
+    params.timer = TimerOutput()
+    disable_timer!(params.timer)
+
+    return options
+end
+
+
+function init_scheme(params::ArmonParameters{T};
+    scheme = :GAD, projection = :euler,
+    riemann = :acoustic, riemann_limiter = :minmod,
+    axis_splitting = :Sequential,
+    nghost = 2, stencil_width = nothing,
+    cst_dt = false, Dt = 0., dt_on_even_cycles = false,
+    options...
+) where {T}
     min_nghost = 1
     min_nghost += (scheme != :Godunov)
     min_nghost += (projection == :euler_2nd)
     min_nghost += (projection == :euler_2nd) && (scheme != :Godunov)
 
     if nghost < min_nghost
-        solver_error(:config, "Not enough ghost cells for the scheme and/or projection, at least $min_nghost are needed.")
-    end
-
-    if (nx % px != 0) || (ny % py != 0)
-        solver_error(:config, "The dimensions of the global domain ($nx x $ny) are not divisible by the number of processors ($px x $py)")
+        solver_error(:config, "Not enough ghost cells for the scheme and/or projection, \
+                               at least $min_nghost are needed, got $nghost")
     end
 
     if projection == :none
@@ -170,7 +299,8 @@ function ArmonParameters(;
         @warn "The detected minimum stencil width is $min_nghost, but $stencil_width was given. \
                The Boundary conditions might be false." maxlog=1
     elseif stencil_width > nghost
-        solver_error(:config, "The stencil width given ($stencil_width) cannot be bigger than the number of ghost cells ($nghost)")
+        solver_error(:config, "The stencil width given ($stencil_width) cannot be bigger than the \
+                               number of ghost cells ($nghost)")
     end
 
     if riemann_limiter isa Symbol
@@ -179,6 +309,31 @@ function ArmonParameters(;
         solver_error(:config, "Expected a Limiter type or a symbol, got: $riemann_limiter")
     end
 
+    if cst_dt && Dt == zero(T)
+        solver_error(:config, "Dt == 0 with constant step enabled")
+    end
+
+    params.nghost = nghost
+    params.stencil_width = stencil_width
+    params.scheme = scheme
+    params.projection = projection
+    params.riemann = riemann
+    params.riemann_limiter = riemann_limiter
+    params.axis_splitting = axis_splitting
+    params.cst_dt = cst_dt
+    params.Dt = Dt
+    params.dt_on_even_cycles = dt_on_even_cycles
+
+    return options
+end
+
+
+function init_test(params::ArmonParameters{T};
+    test = :Sod,
+    domain_size = nothing, origin = nothing,
+    cfl = 0., maxtime = 0., maxcycle = 500_000,
+    options...
+) where {T}
     if test isa Symbol
         test_type = test_from_name(test)
         test = nothing
@@ -188,187 +343,161 @@ function ArmonParameters(;
         solver_error(:config, "Expected a TestCase type or a symbol, got: $test")
     end
 
-    if compare && async_comms
-        solver_error(:config, "Cannot compare when using asynchronous communications")
-    end
-
-    if async_comms && !use_gpu && !use_kokkos
-        @warn "Asynchronous communications only work when using a GPU, or with a multithreading \
-               backend which supports tasking." maxlog=1
-    end
-
-    if async_comms && use_kokkos
-        @warn "Asynchronous communications with Kokkos NYI" maxlog=1
-    end
-
-    # MPI
-    global_comm = something(global_comm, MPI.COMM_WORLD)
-    if use_MPI
-        !MPI.Initialized() && solver_error(:config, "'use_MPI=true' but MPI has not yet been initialized")
-
-        rank = MPI.Comm_rank(global_comm)
-        proc_size = MPI.Comm_size(global_comm)
-
-        # Create a cartesian grid communicator of px × py processes. reorder=true can be very
-        # important for performance since it will optimize the layout of the processes.
-        C_COMM = MPI.Cart_create(global_comm, [Int32(px), Int32(py)], [Int32(0), Int32(0)], reorder_grid)
-        (cx, cy) = MPI.Cart_coords(C_COMM)
-
-        neighbours = Dict(
-            Left   => MPI.Cart_shift(C_COMM, 0, -1)[2],
-            Right  => MPI.Cart_shift(C_COMM, 0,  1)[2],
-            Bottom => MPI.Cart_shift(C_COMM, 1, -1)[2],
-            Top    => MPI.Cart_shift(C_COMM, 1,  1)[2]
-        )
-    else
-        rank = 0
-        proc_size = 1
-        C_COMM = global_comm
-        (cx, cy) = (0, 0)
-        neighbours = Dict(
-            Left   => MPI.PROC_NULL,
-            Right  => MPI.PROC_NULL,
-            Bottom => MPI.PROC_NULL,
-            Top    => MPI.PROC_NULL
-        )
-    end
-
-    root_rank = 0
-    is_root = rank == root_rank
-
-    if use_kokkos
-        device_tag = Val(:Kokkos)
-        device = init_device(device_tag, is_root)
-        armon_cpp, kokkos_lib = init_backend(device_tag,
-            flt_type, cmake_options, kokkos_options, use_MPI, is_root, global_comm)
-    elseif use_gpu
-        # KernelAbstractions backend: :CPU, :CUDA or :ROCM
-        device_tag = Val(device)
-        device = init_device(device_tag, is_root)
-        init_backend(device_tag)
-
-        armon_cpp = nothing
-        kokkos_lib = nothing
-    else
-        device_tag = Val(:CPU)
-        device = CPU_HP()
-
-        armon_cpp = nothing
-        kokkos_lib = nothing
-    end
-
-    length(block_size) > 3 && solver_error(:config, "Expected `block_size` to contain up to 3 elements, got: $block_size")
-    block_size = tuple(block_size..., ntuple(Returns(1), 3 - length(block_size))...)
-
-    # Profiling
-    profiling_info = Set{Symbol}(profiling)
-    measure_time && push!(profiling_info, :TimerOutputs)
-    enable_profiling = !isempty(profiling_info)
-
-    missing_prof = setdiff(profiling_info, (cb.name for cb in Armon.SECTION_PROFILING_CALLBACKS))
-    setdiff!(missing_prof, (cb.name for cb in Armon.KERNEL_PROFILING_CALLBACKS))
-    if !isempty(missing_prof)
-        solver_error(:config, "Unknown profiler$(length(missing_prof) > 1 ? "s" : ""): " * join(missing_prof, ", "))
-    end
-
-    # Initialize the test
     if isnothing(domain_size)
         domain_size = default_domain_size(test_type)
-        domain_size = Tuple(flt_type.(domain_size))
     end
+    params.domain_size = Tuple(T.(domain_size))
 
     if isnothing(origin)
         origin = default_domain_origin(test_type)
-        origin = Tuple(flt_type.(origin))
     end
+    params.origin = Tuple(T.(origin))
 
     if isnothing(test)
-        (sx, sy) = domain_size
-        Δx::flt_type = sx / nx
-        Δy::flt_type = sy / ny
+        (sx, sy) = params.domain_size
+        Δx::T = sx / params.nx
+        Δy::T = sy / params.ny
         test = create_test(Δx, Δy, test_type)
     end
+    params.test = test
+    params.maxcycle = maxcycle
 
-    if cfl == 0
-        cfl = default_CFL(test)
-    end
+    params.cfl     = cfl     != 0 ? cfl     : default_CFL(test)
+    params.maxtime = maxtime != 0 ? maxtime : default_max_time(test)
 
-    if maxtime == 0
-        maxtime = default_max_time(test)
-    end
+    return options
+end
+
+
+function init_indexing(params::ArmonParameters; options...)
+    (; nx, ny) = params
 
     # Dimensions of the global domain
     g_nx = nx
     g_ny = ny
 
-    dx = flt_type(domain_size[1] / g_nx)
-
     # Dimensions of an array of the sub-domain
+    (px, py) = params.proc_dims
     nx ÷= px
     ny ÷= py
-    row_length = nghost * 2 + nx
-    col_length = nghost * 2 + ny
-    nbcell = row_length * col_length
+    row_length = params.nghost * 2 + nx
+    col_length = params.nghost * 2 + ny
+
+    params.nx = nx
+    params.ny = ny
+    params.row_length = row_length
+    params.col_length = col_length
+    params.global_grid = (g_nx, g_ny)
 
     # First and last index of the real domain of an array
-    ideb = row_length * nghost + nghost + 1
-    ifin = row_length * (ny - 1 + nghost) + nghost + nx
-    index_start = ideb - row_length - 1  # Used only by the `@i` macro
+    params.ideb = row_length * params.nghost + params.nghost + 1
+    params.ifin = row_length * (ny - 1 + params.nghost) + params.nghost + nx
+    params.index_start = params.ideb - row_length - 1  # Used only by the `@i` macro
 
     # Used only for indexing with the `@i` macro
-    idx_row = row_length
-    idx_col = 1
+    params.idx_row = row_length
+    params.idx_col = 1
 
-    if use_MPI
-        comm_array_size = max(nx, ny) * nghost * 7
-    else
-        comm_array_size = 0
+    params.dx = params.domain_size[1] / g_nx
+
+    # Array allocation sizes
+    params.nbcell = row_length * col_length
+    params.comm_array_size = params.use_MPI ? max(nx, ny) * params.nghost * 7 : 0
+
+    params.steps_ranges = StepsRanges()
+
+    return options
+end
+
+
+function init_output(params::ArmonParameters{T};
+    silent = 0, output_dir = ".", output_file = "output",
+    write_output = false, write_ghosts = false, write_slices = false, output_precision = nothing,
+    animation_step = 0,
+    compare = false, is_ref = false, comparison_tolerance = 1e-10, debug_indexes = false,
+    check_result = false, return_data = false,
+    options...
+) where {T}
+    if compare && params.async_comms
+        solver_error(:config, "Cannot compare when using asynchronous communications")
     end
 
-    timer = TimerOutput()
-    disable_timer!(timer)
+    if isnothing(output_precision)
+        output_precision = T == Float64 ? 17 : 9  # Exact decimal output by default
+    end
 
-    params = ArmonParameters{flt_type, typeof(device)}(
-        test, riemann, scheme, riemann_limiter,
+    params.silent = silent
+    params.output_dir = output_dir
+    params.output_file = output_file
+    params.write_output = write_output
+    params.write_ghosts = write_ghosts
+    params.write_slices = write_slices
+    params.output_precision = output_precision
+    params.animation_step = animation_step
+    params.compare = compare
+    params.is_ref = is_ref
+    params.comparison_tolerance = comparison_tolerance
+    params.debug_indexes = debug_indexes
+    params.check_result = check_result
+    params.return_data = return_data
 
-        nghost, nx, ny, dx, domain_size, origin,
-        cfl, Dt, cst_dt, dt_on_even_cycles,
-        axis_splitting, projection,
+    return options
+end
 
-        row_length, col_length, nbcell,
-        ideb, ifin, index_start,
-        idx_row, idx_col,
-        X_axis, 1, stencil_width,
 
-        maxtime, maxcycle,
+function init_solver_state(params::ArmonParameters{T}; options...) where {T}
+    params.cycle = 0
+    params.time = zero(T)
+    params.cycle_dt = zero(T)
+    params.curr_cycle_dt = zero(T)
+    params.next_cycle_dt = zero(T)
+    params.initial_mass = zero(T)
+    params.initial_energy = zero(T)
+    return options
+end
 
-        0, zero(flt_type), Dt, zero(flt_type), zero(flt_type), StepsRanges(),
 
-        silent, output_dir, output_file,
-        write_output, write_ghosts, write_slices, output_precision, animation_step,
-        measure_time, timer, time_async,
-        enable_profiling, profiling_info,
-        return_data,
+"""
+    create_device(::Val{:device_name})
 
-        use_threading, use_simd, use_gpu, use_kokkos, device, block_size,
-        Dict{Symbol, Union{Nothing, IdDict}}(),
+Create a device object from its name.
 
-        use_MPI, is_root, rank, root_rank,
-        proc_size, (px, py), global_comm, C_COMM, (cx, cy), neighbours, (g_nx, g_ny),
-        reorder_grid, comm_array_size,
-        async_comms,
+Default devices:
+ - `:CPU`: the CPU backend of `KernelAbstractions.jl`
+ - `:CPU_HP`: `Polyester.jl` multithreading
 
-        compare, is_ref, comparison_tolerance, debug_indexes,
-        check_result, zero(flt_type), zero(flt_type),
+Extensions:
+ - `:Kokkos`: the default `Kokkos.jl` device
+ - `:CUDA`: the `CUDA.jl` backend of `KernelAbstractions.jl`
+ - `:ROCM`: the `AMDGPU.jl` backend of `KernelAbstractions.jl`
+"""
+function create_device end
 
-        armon_cpp, kokkos_lib,
-    )
 
-    update_axis_parameters(params, first(split_axes(params))[1])
-    update_steps_ranges(params)
-    post_init_device(device_tag, params)
+create_device(::Val{:CPU}) = CPU()
+create_device(::Val{:CPU_HP}) = CPU_HP()
 
-    return params
+
+"""
+    init_backend(params::ArmonParameters, ::Dev; options...)
+
+Initialize the backend corresponding to the `Dev` device returned by `create_device` using
+`options`. Set the `params.backend_options` field.
+
+It must return `options`, with the backend-specific options removed.
+"""
+function init_backend(params::ArmonParameters, ::Dev; options...) where {Dev}
+    params.backend_options = EmptyParams()
+    return options
+end
+
+
+function init_backend(params::ArmonParameters, ::CPU; options...)
+    # The CPU backend of KernelAbstractions can be useful in some cases for debugging
+    params.is_root && @warn "`use_gpu=true` but the device is set to the CPU. \
+                              Therefore no kernel will run on a GPU." maxlog=1
+    params.backend_options = EmptyParams()
+    return options
 end
 
 
@@ -488,25 +617,7 @@ end
 
 
 print_parameters(p::ArmonParameters) = print_parameters(stdout, p)
-
-
 Base.show(io::IO, p::ArmonParameters) = print_parameters(io::IO, p::ArmonParameters)
-
-
-function init_device(::Val{D}, _) where D
-    solver_error(:config, "Unknown GPU device: $D")
-end
-
-
-function init_device(::Val{:CPU}, is_root)
-    # Useful in some cases for debugging
-    is_root && @warn "`use_gpu=true` but the device is set to the CPU. \
-                      Therefore no kernel will run on a GPU." maxlog=1
-    return CPU()
-end
-
-function init_backend(::Val{D}) where D end
-function post_init_device(::Val{D}, params) where D end
 
 
 """
