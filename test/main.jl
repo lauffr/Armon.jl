@@ -72,6 +72,7 @@ union!(main_options)
 
 ENV["TEST_KOKKOS_MPI"] = parse(Bool, get(ENV, "TEST_KOKKOS_MPI", "false")) || (:kokkos in main_options)
 TEST_KOKKOS_BACKEND = ENV["TEST_KOKKOS_BACKEND"] = get(ENV, "TEST_KOKKOS_BACKEND", "OPENMP")
+TEST_KOKKOS_PATH = get(ENV, "TEST_KOKKOS_PATH", nothing)
 
 
 function do_tests(tests_to_do)

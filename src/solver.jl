@@ -43,8 +43,6 @@ function solver_cycle(params::ArmonParameters, data::ArmonDualData)
     (@section "time_step" time_step(params, data)) && return true
     @checkpoint("time_step") && return true
 
-    @printf("Time steps for cycle %4d: current = %.18f, next = %.18f\n", params.cycle, params.curr_cycle_dt, params.next_cycle_dt)
-
     @section "$axis" for (axis, dt_factor) in split_axes(params)
         update_axis_parameters(params, axis)
         update_steps_ranges(params)

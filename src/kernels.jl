@@ -23,7 +23,7 @@ end
 @generic_kernel function acoustic_GAD!(
     s::Int, dt::T, dx::T,
     ustar::V, pstar::V, rho::V, u::V, pmat::V, cmat::V,
-    ::LimiterType
+    limiter_tag::LimiterType
 ) where {T, V <: AbstractArray{T}, LimiterType <: Limiter}
     i = @index_2D_lin()
 
