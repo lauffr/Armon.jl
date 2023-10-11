@@ -108,8 +108,8 @@ import Armon: DomainRange, StepsRanges, update_steps_ranges, update_axis_paramet
     end
 
     @testset "StepsRanges $(nx)×$(ny) $ng ghosts" for (nx, ny, ng) in (
-                                                            (13, 7, 4), (13, 7, 3), (7, 7, 5),
-                                                            (7, 13, 4), (7, 13, 3), (7, 7, 5),
+                                                            (13, 7, 4), (13, 7, 5), (7, 7, 5),
+                                                            (7, 13, 4), (7, 13, 5), (7, 7, 5),
                                                             (40, 40, 5))
         p = ArmonParameters(;
             scheme = :GAD, projection = :euler_2nd,

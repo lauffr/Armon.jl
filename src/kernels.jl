@@ -247,7 +247,7 @@ end
             (; high_ρ::T, low_ρ::T,
                high_E::T, low_E::T,
                high_u::T, low_u::T,
-               high_v::T, low_v::T) = init_test_params(test_case)::InitTestParamsTwoState{T}
+               high_v::T, low_v::T) = init_test_params(test_case, T)
         end
     end
 
