@@ -187,17 +187,16 @@ function read_time_step_file(params::ArmonParameters{T}, file_name::String) wher
     end
 end
 
-
 #
 # Comparison functions
 #
 
 function compare_data(label::String, params::ArmonParameters,
-        ref_data::ArmonData{V}, our_data::ArmonData{V}; mask=nothing) where V
+        ref_data::ArmonData, our_data::ArmonData; mask=nothing, vars=saved_variables())
     (; row_length, nghost, nbcell, comparison_tolerance) = params
     different = false
 
-    for name in saved_variables()
+    for name in vars
         ref_val = getfield(ref_data, name)
         our_val = getfield(our_data, name)
 
