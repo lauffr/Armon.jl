@@ -200,7 +200,7 @@ function compare_data(label::String, params::ArmonParameters,
         ref_val = getfield(ref_data, name)
         our_val = getfield(our_data, name)
 
-        diff_mask = .~ isapprox.(ref_val, our_val; atol=comparison_tolerance)
+        diff_mask = .~ isapprox.(ref_val, our_val; rtol=comparison_tolerance)
         !params.write_ghosts && (diff_mask .*= our_data.domain_mask)
         !isnothing(mask) && (diff_mask .*= mask)
         diff_count = sum(diff_mask)
@@ -214,8 +214,11 @@ function compare_data(label::String, params::ArmonParameters,
                 for idx in 1:nbcell
                     !diff_mask[idx] && continue
                     i, j = ((idx-1) % row_length) + 1 - nghost, ((idx-1) ÷ row_length) + 1 - nghost
-                    @printf(" - %5d (%3d,%3d): %10.5g ≢ %10.5g (%10.5g)\n", idx, i, j, 
-                        ref_val[idx], our_val[idx], ref_val[idx] - our_val[idx])
+                    val_diff = ref_val[idx] - our_val[idx]
+                    diff_ulp = val_diff / eps(ref_val[idx])
+                    abs(diff_ulp) > 1e10 && (diff_ulp = Inf)
+                    @printf(" - %5d (%3d,%3d): %10.5g ≢ %10.5g (%11.5g, ulp: %8g)\n", idx, i, j, 
+                        ref_val[idx], our_val[idx], val_diff, diff_ulp)
                 end
             else
                 println()
@@ -287,7 +290,7 @@ function step_checkpoint(params::ArmonParameters, data::ArmonDualData, step_labe
         else
             if step_label == "time_step"
                 ref_dt = read_time_step_file(params, step_file_name)
-                different = isapprox(ref_dt, params.curr_cycle_dt; atol=params.comparison_tolerance)
+                different = isapprox(ref_dt, params.curr_cycle_dt; rtol=params.comparison_tolerance)
                 @printf("Time step difference: ref Δt = %.18f, Δt = %.18f, diff = %.18f\n",
                         ref_dt, params.curr_cycle_dt, ref_dt - params.curr_cycle_dt)
             else
