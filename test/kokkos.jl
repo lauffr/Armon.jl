@@ -21,7 +21,9 @@ end
 function cmp_cpp_with_reference_for(type, test; kwargs...)
     debug_kernels = true
     armon_cpp_lib_src = TEST_KOKKOS_PATH
-    ref_params = get_reference_params(test, type; use_kokkos=true, debug_kernels, armon_cpp_lib_src, kwargs...)
+    use_md_iter = true
+    use_simd = !use_md_iter
+    ref_params = get_reference_params(test, type; use_kokkos=true, debug_kernels, armon_cpp_lib_src, use_md_iter, use_simd, kwargs...)
     dt, cycles, data = run_armon_cpp_reference(ref_params)
     ref_data = ArmonData(ref_params)
 
@@ -40,7 +42,9 @@ end
 function cmp_halo_exchange_function(side; kwargs...)
     debug_kernels = true
     armon_cpp_lib_src = TEST_KOKKOS_PATH
-    kokkos_params = get_reference_params(:Sod, Float64; use_kokkos=true, debug_indexes=true, debug_kernels, armon_cpp_lib_src, kwargs...)
+    use_md_iter = true
+    use_simd = !use_md_iter
+    kokkos_params = get_reference_params(:Sod, Float64; use_kokkos=true, debug_indexes=true, debug_kernels, armon_cpp_lib_src, use_md_iter, use_simd, kwargs...)
     ref_params = get_reference_params(:Sod, Float64; use_kokkos=false, debug_indexes=true, kwargs...)
 
     kokkos_params.comm_array_size = max(kokkos_params.nx, kokkos_params.ny) * kokkos_params.nghost * 7
