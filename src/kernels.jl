@@ -230,7 +230,7 @@ end
     domain_size::NTuple{2, T}, origin::NTuple{2, T},
     cart_coords::NTuple{2, Int}, global_grid::NTuple{2, Int},
     x::V, y::V, rho::V, Emat::V, umat::V, vmat::V, 
-    domain_mask::V, pmat::V, cmat::V, ustar::V, pstar::V, 
+    domain_mask::V, pmat::V, cmat::V, gmat::V, ustar::V, pstar::V, 
     test_case::Test, debug_indexes::Bool
 ) where {T, V <: AbstractArray{T}, Test <: TestCase}
     @kernel_init begin
@@ -300,6 +300,7 @@ end
     # Set to zero to make sure no non-initialized values changes the result
     pmat[i] = 0
     cmat[i] = 1  # Set to 1 as a max speed of 0 will create NaNs
+    gmat[i] = 0
     ustar[i] = 0
     pstar[i] = 0
 end
