@@ -486,62 +486,141 @@ function make_kokkos_kernel_call(func_name, cpu_kernel_def, is_V_in_where, loop_
     kokkos_def = deepcopy(cpu_kernel_def)
     kokkos_def[:name] = Symbol("kokkos_", kokkos_def[:name])
 
-    kernel_def_args, _ = pack_struct_fields(kokkos_def[:args], ArmonParameters)
+    _, params_args = pack_struct_fields(kokkos_def[:args], ArmonParameters)
+
+    special_arguments = Dict{Symbol, Any}()
+    if func_name === :acoustic_GAD!
+        push!(special_arguments, :limiter_tag => (:Cint, :(params.backend_options.limiter_index)))
+    elseif func_name === :init_test
+        push!(special_arguments, :test_case => (:Cint, :(params.backend_options.test_case_index)))
+    elseif func_name === :boundary_conditions!
+        # The C++ `boundary_conditions` is iterated a bit differently from the Julia kernel, and the
+        # `inner_range` replaces those two explicit arguments
+        push!(special_arguments, :stride => (nothing, nothing), :i_start => (nothing, nothing))
+    end
+
+    additional_arguments = Dict(
+        :init_test => (:T, :(typeof(params.test) <: Sedov ? params.test.r : zero(T)))
+    )
+
+    map_type(type) = type in (:Int, :Int64, Int, Int64) ? Expr(:$, :Idx) : type
 
     kernel_args = []
     kernel_call = []
     ccall_args = []
     ccall_types = []
-    for arg in kernel_def_args
+    for arg in kokkos_def[:args]
         arg_name, arg_type, is_splat, _ = splitarg(arg)        
         is_splat && error("splat argument is incompatible with ccall")
 
-        push!(kernel_args, isnothing(arg_name) ? :(::$arg_type) : :($arg_name::$arg_type))
-        push!(kernel_call, isnothing(arg_name) ? :($arg_type()) : :($arg_name))
+        if !(arg_name in params_args)
+            push!(kernel_args, isnothing(arg_name) ? :(::$arg_type) : :($arg_name::$arg_type))
+            push!(kernel_call, isnothing(arg_name) ? :($arg_type()) : :($arg_name))
+        end
 
-        (isnothing(arg_name) || arg_name === :test_case) && continue  # Skip unnamed arguments (method dispatch guides)
-
-        if is_V_in_where && arg_type === :V
+        if arg_name in keys(special_arguments)
+            ccall_type, ccall_arg = special_arguments[arg_name]
+            isnothing(ccall_type) && continue
+            push!(ccall_args, ccall_arg)
+            push!(ccall_types, ccall_type)
+        elseif isnothing(arg_name)
+            # Skip unnamed arguments (method dispatch guides)
+        elseif is_V_in_where && arg_type === :V
             push!(ccall_args, arg_name)
             push!(ccall_types, :(Ref{V}))
         elseif arg_name === :params || arg_name === :data
-            push!(ccall_args, :(pointer_from_objref($arg_name)))
-            push!(ccall_types, :(Ptr{Nothing}))
+            # Only the useful fields of special struct should be passed to the kernel
         elseif arg_name in loop_params_names
-            push!(ccall_args, :(first($arg_name)), :(step($arg_name)), :(last($arg_name)))
-            push!(ccall_types, :(Int64), :(Int64), :(Int64))
+            # Loop params are converted below
+        elseif startswith(string(arg_type), r"NTuple")
+            # Unpack NTuples and convert their types if needed
+            tuple_size = arg_type.args[2]
+            tuple_type = arg_type.args[3]
+            for i in 1:tuple_size
+                push!(ccall_args, :($arg_name[$i]))
+                push!(ccall_types, map_type(tuple_type))
+            end
         else
             push!(ccall_args, arg_name)
-            push!(ccall_types, arg_type)
+            push!(ccall_types, map_type(arg_type))
         end
+    end
+
+    if func_name in keys(additional_arguments)
+        type, value = additional_arguments[func_name]
+        push!(ccall_args, value)
+        push!(ccall_types, map_type(type))
     end
 
     kokkos_def[:args] = kernel_args
 
-    # TODO: disabled since whereparams are evaluated immediately, therefore Kokkos is undefined
-    #  => replace with a typeassert in the function body?
-    #=if is_V_in_where
-        kokkos_def[:whereparams] = map(kokkos_def[:whereparams]) do where_p
-            (where_p isa Expr && @capture(where_p, V <: AbstractArray{T})) || return where_p
-            return :(V <: Main.Kokkos.View{T})
-        end
-    end=#
+    # Transform the `main_range` and `inner_range` into a `ArmonKokkos.Range` and
+    # `ArmonKokkos.InnerRange1D` (or 2D). For convenience they are stored in the `backend_options`
+    # as mutable structs, allowing to use `pointer_from_objref`.
+    if length(loop_params_names) == 1
+        # Iterate a 1D range
+        pushfirst!(ccall_args, :(pointer_from_objref(range)), :(pointer_from_objref(inner_range_1D)))
+        pushfirst!(ccall_types, :(Ptr{Cvoid}), :(Ptr{Cvoid}))
 
+        if func_name === :boundary_conditions!
+            range_start_expr = :(i_start + stride - 1)
+            range_step_expr = :(stride)
+        else
+            range_start_expr = :(first(loop_range) - 1)
+            range_step_expr = :(step(loop_range))
+        end
+
+        transform_range_expr = quote
+            (; range, inner_range_1D) = params.backend_options
+
+            range.start = 0
+            range.end = length(loop_range)
+
+            inner_range_1D.start = $range_start_expr
+            inner_range_1D.step  = $range_step_expr
+        end
+    else
+        # Iterate a 2D range
+        pushfirst!(ccall_args, :(pointer_from_objref(range)), :(pointer_from_objref(inner_range_2D)))
+        pushfirst!(ccall_types, :(Ptr{Cvoid}), :(Ptr{Cvoid}))
+
+        transform_range_expr = quote
+            (; range, inner_range_2D) = params.backend_options
+
+            range.start = 0
+            range.end = length(main_range) * length(inner_range)
+        
+            inner_range_2D.main_range_start = first(main_range) - 1
+            inner_range_2D.main_range_step  = step(main_range)
+            inner_range_2D.row_range_start  = first(inner_range) - 1
+            inner_range_2D.row_range_length = length(inner_range)
+        end
+    end
+
+    # Get the C++ kernel symbol
     if endswith(string(func_name), "!")
         func_name = string(func_name)[1:end-1] |> Symbol
     end
     func_name_quote = QuoteNode(func_name)
 
     kokkos_def[:body] = quote
-        ccall(Main.Kokkos.get_symbol(params.kokkos_lib, $func_name_quote), Cvoid, CCallTypes)
+        $transform_range_expr
+        (; $(params_args...)) = params
+        # `CCallTypes` is manually replaced below
+        ccall(Main.Kokkos.get_symbol(params.backend_options.lib, $func_name_quote), Cvoid, CCallTypes)
     end
 
-    body_ccall_args = kokkos_def[:body].args[2].args
-    body_ccall_args[4] = Expr(:tuple, ccall_types...)  # CCallTypes => ($ccall_types...)
+    body_ccall_args = kokkos_def[:body].args[end].args
+    body_ccall_args[end] = Expr(:tuple, ccall_types...)  # CCallTypes => ($ccall_types...)
     append!(body_ccall_args, ccall_args)
 
-    # The kernel is a @generated function, therefore we need to return the body expression
-    kokkos_def[:body] = QuoteNode(kokkos_def[:body])
+    # The kernel is a @generated function, therefore we need to return the body expression.
+    # The `Idx` type is retrieved from ArmonKokkos. Any mention of it in the quoted body interpolates it.
+    kokkos_def[:body] = quote
+        kokkos_options_t = params.parameters[3]
+        Idx = kokkos_options_t.parameters[1]
+        $(Expr(:quote, kokkos_def[:body]))
+    end
 
     kokkos_call = Expr(:call, kokkos_def[:name], kernel_call...)
 
@@ -569,6 +648,8 @@ function transform_kernel(func::Expr)
     for expr in def[:whereparams]
         if expr === :T
             is_T_in_where = true
+        elseif expr === :V
+            is_V_in_where = true
         elseif expr isa Expr && @capture(expr, V <: AbstractArray{T})
             is_V_in_where = true
         end

@@ -53,10 +53,9 @@ Base.show(io::IO, ::Sod_circ)  = print(io, "Sod shock tube (cylindrical symmetry
 Base.show(io::IO, ::Bizarrium) = print(io, "Bizarrium")
 Base.show(io::IO, ::Sedov)     = print(io, "Sedov")
 
-# TODO : use 0.0625 for Sod_circ since 1/8 makes no sense and is quite arbitrary
 test_region_high(x::T, _::T, ::Sod)       where T = x ≤ 0.5
 test_region_high(_::T, y::T, ::Sod_y)     where T = y ≤ 0.5
-test_region_high(x::T, y::T, ::Sod_circ)  where T = (x - T(0.5))^2 + (y - T(0.5))^2 ≤ T(0.125)
+test_region_high(x::T, y::T, ::Sod_circ)  where T = (x - T(0.5))^2 + (y - T(0.5))^2 ≤ T(0.09)  # radius of 0.3 
 test_region_high(x::T, _::T, ::Bizarrium) where T = x ≤ 0.5
 test_region_high(x::T, y::T, s::Sedov{T}) where T = x^2 + y^2 ≤ s.r^2
 
@@ -87,42 +86,42 @@ struct InitTestParams{T}
 end
 
 
-function init_test_params(::Union{Sod, Sod_y, Sod_circ})
+function init_test_params(::Union{Sod, Sod_y, Sod_circ}, ::Type{T}) where {T}
     return InitTestParamsTwoState(
-        high_ρ = 1.,
-         low_ρ = 0.125,
-        high_E = 2.5,
-         low_E = 2.0,
-        high_u = 0.,
-         low_u = 0.,
-        high_v = 0.,
-         low_v = 0.
+        high_ρ = T(1.),
+         low_ρ = T(0.125),
+        high_E = T(2.5),
+         low_E = T(2.0),
+        high_u = zero(T),
+         low_u = zero(T),
+        high_v = zero(T),
+         low_v = zero(T)
     )
 end
 
-function init_test_params(::Bizarrium)
+function init_test_params(::Bizarrium, ::Type{T}) where {T}
     return InitTestParamsTwoState(
-        high_ρ = 1.42857142857e+4,
-         low_ρ = 10000.,
-        high_E = 4.48657821135e+6,
-         low_E = 0.5 * 250^2,
-        high_u = 0.,
-         low_u = 250.,
-        high_v = 0.,
-         low_v = 0.
+        high_ρ = T(1.42857142857e+4),
+         low_ρ = T(10000.),
+        high_E = T(4.48657821135e+6),
+         low_E = T(0.5 * 250^2),
+        high_u = zero(T),
+         low_u = T(250.),
+        high_v = zero(T),
+         low_v = zero(T)
     )
 end
 
-function init_test_params(p::Sedov)
+function init_test_params(p::Sedov, ::Type{T}) where {T}
     return InitTestParamsTwoState(
-        high_ρ = 1.,
-         low_ρ = 1.,
-        high_E = 0.851072 / (π * p.r^2),
-         low_E = 2.5e-14,
-        high_u = 0.,
-         low_u = 0.,
-        high_v = 0.,
-         low_v = 0.
+        high_ρ = T(1.),
+         low_ρ = T(1.),
+        high_E = T(0.851072 / (π * p.r^2)),
+         low_E = T(2.5e-14),
+        high_u = zero(T),
+         low_u = zero(T),
+        high_v = zero(T),
+         low_v = zero(T)
     )
 end
 
@@ -132,19 +131,19 @@ const BC_Dirichlet_X = (-1,  1)
 const BC_Dirichlet_Y = ( 1, -1)
 
 
-function boundaryCondition(side::Side, ::Sod)::NTuple{2, Int}
+function boundary_condition(side::Side, ::Sod)::NTuple{2, Int}
     return (side == Left || side == Right) ? BC_Dirichlet_X : BC_FreeFlow
 end
 
-function boundaryCondition(side::Side, ::Sod_y)::NTuple{2, Int}
+function boundary_condition(side::Side, ::Sod_y)::NTuple{2, Int}
     return (side == Left || side == Right) ? BC_FreeFlow : BC_Dirichlet_Y
 end
 
-function boundaryCondition(side::Side, ::Sod_circ)::NTuple{2, Int}
+function boundary_condition(side::Side, ::Sod_circ)::NTuple{2, Int}
     return (side == Left || side == Right) ? BC_Dirichlet_X : BC_Dirichlet_Y
 end
 
-function boundaryCondition(side::Side, ::Bizarrium)::NTuple{2, Int}
+function boundary_condition(side::Side, ::Bizarrium)::NTuple{2, Int}
     if side == Left
         return BC_Dirichlet_X
     elseif side == Right
@@ -154,7 +153,7 @@ function boundaryCondition(side::Side, ::Bizarrium)::NTuple{2, Int}
     end
 end
 
-function boundaryCondition(::Side, ::Sedov)::NTuple{2, Int}
+function boundary_condition(::Side, ::Sedov)::NTuple{2, Int}
     return BC_FreeFlow
 end
 
