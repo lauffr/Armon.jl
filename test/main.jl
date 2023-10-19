@@ -58,10 +58,10 @@ filter!(!isempty, main_options)
 main_options = main_options .|> Symbol |> union
 
 if :all in main_options
-    expanded_options = [:quality, :stability, :domains, :convergence, :conservation, :kernels, :kokkos,
-                        :gpu, :performance, :async, :mpi]
+    expanded_options = [:quality, :stability, :domains, :convergence, :conservation, :kernels,
+                        :kokkos, :gpu, :performance, :async, :mpi]
 elseif :short in main_options
-    expanded_options = [:quality, :stability, :domains, :convergence, :conservation, :kernels, :kokkos]
+    expanded_options = [:quality, :stability, :domains, :convergence, :conservation, :kernels]
 else
     expanded_options = []
 end
