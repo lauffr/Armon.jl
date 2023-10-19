@@ -85,7 +85,7 @@ get_idx_type() = Idx_type[]
 
 function Armon.init_backend(params::ArmonParameters, ::Kokkos.ExecutionSpace;
     armon_cpp_lib_src = nothing, cmake_options = [], kokkos_options = nothing,
-    debug_kernels = false, use_md_iter = false,
+    debug_kernels = false, use_md_iter = 0,
     options...
 )
     !Kokkos.is_initialized() && solver_error(:config, "Kokkos has not yet been initialized")
@@ -102,7 +102,9 @@ function Armon.init_backend(params::ArmonParameters, ::Kokkos.ExecutionSpace;
     option!(armon_cpp, "TRY_ALL_CALLS", debug_kernels; prefix="")
     option!(armon_cpp, "CHECK_VIEW_ORDER", debug_kernels; prefix="")
     option!(armon_cpp, "USE_SIMD_KERNELS", params.use_simd; prefix="")
-    option!(armon_cpp, "USE_MD_ITER", use_md_iter; prefix="")
+    option!(armon_cpp, "USE_2D_ITER", use_md_iter == 1; prefix="")
+    option!(armon_cpp, "USE_MD_ITER", use_md_iter >= 2; prefix="")
+    option!(armon_cpp, "BALANCE_MD_ITER", use_md_iter == 3; prefix="")
     is_NVTX_loaded = !isnothing(Base.get_extension(Armon, :ArmonNVTX))
     option!(armon_cpp, "USE_NVTX", is_NVTX_loaded; prefix="")
 
