@@ -187,7 +187,7 @@ function init_MPI(params::ArmonParameters;
         # important for performance since it will optimize the layout of the processes.
         C_COMM = MPI.Cart_create(global_comm, [Int32(px), Int32(py)], [Int32(0), Int32(0)], reorder_grid)
         params.cart_comm = C_COMM
-        params.cart_coords = MPI.Cart_coords(C_COMM)
+        params.cart_coords = tuple(MPI.Cart_coords(C_COMM)...)
 
         params.neighbours = Dict(
             Left   => MPI.Cart_shift(C_COMM, 0, -1)[2],
@@ -782,6 +782,11 @@ function update_steps_ranges(params::ArmonParameters)
     row_range = 1:nx
     real_range = DomainRange(col_range, row_range)
     steps.real_domain = real_range
+
+    # Full domain (real + ghosts), for initialization + first-touch
+    full_range = inflate_dir(real_range, X_axis, params.nghost)
+    full_range = inflate_dir(full_range, Y_axis, params.nghost)
+    steps.full_domain = full_range
 
     # Steps ranges, computed so that there is no need for an extra BC step before the projection
     steps.EOS = real_range  # The BC overwrites any changes to the ghost cells right after

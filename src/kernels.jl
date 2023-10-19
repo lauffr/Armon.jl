@@ -248,10 +248,12 @@ end
                high_E::T, low_E::T,
                high_u::T, low_u::T,
                high_v::T, low_v::T) = init_test_params(test_case, T)
+        else
+            init_vals::InitTestParams{T}
         end
     end
 
-    i = @index_1D_lin()
+    i = @index_2D_lin()
 
     ix = ((i-1) % row_length) - nghost
     iy = ((i-1) ÷ row_length) - nghost
@@ -285,7 +287,7 @@ end
                 vmat[i] = low_v
             end
         else
-            init_vals::InitTestParams{T} = init_test_params(x_mid, y_mid, test_case)
+            init_vals = init_test_params(x_mid, y_mid, test_case)
             rho[i]  = init_vals.ρ
             Emat[i] = init_vals.E
             umat[i] = init_vals.u
@@ -388,7 +390,7 @@ end
 
 
 function init_test(params::ArmonParameters, data::ArmonDualData)
-    return init_test(params, device(data), 1:params.nbcell, params.test)
+    return init_test(params, device(data), params.steps_ranges.full_domain, params.test)
 end
 
 
