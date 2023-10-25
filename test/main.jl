@@ -5,7 +5,7 @@ using Armon
 import Armon: SolverException
 using Test
 
-WRITE_FAILED = parse(Bool, get(ENV, "WRITE_FAILED", "false"))  # TODO: impl for non-mpi tests
+WRITE_FAILED = parse(Bool, get(ENV, "WRITE_FAILED", "false"))
 NO_MPI = parse(Bool, get(ENV, "NO_MPI", "false"))
 
 if !NO_MPI

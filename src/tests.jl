@@ -42,6 +42,8 @@ default_max_time(::Union{Sod, Sod_y, Sod_circ}) = 0.20
 default_max_time(::Bizarrium) = 80e-6
 default_max_time(::Sedov) = 1.0
 
+specific_heat_ratio(::Union{Sod, Sod_y, Sod_circ, Bizarrium, Sedov}) = 7/5
+
 is_conservative(::TestCase) = true
 is_conservative(::Bizarrium) = false
 
@@ -116,7 +118,7 @@ function init_test_params(p::Sedov, ::Type{T}) where {T}
     return InitTestParamsTwoState(
         high_ρ = T(1.),
          low_ρ = T(1.),
-        high_E = T(0.851072 / (π * p.r^2)),
+        high_E = T((1/1.033)^5 / (π * p.r^2)),  # E so that the blast wave reaches r=1 at t=1 (E is spread in a circle of radius `p.r`)
          low_E = T(2.5e-14),
         high_u = zero(T),
          low_u = zero(T),

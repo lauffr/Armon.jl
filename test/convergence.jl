@@ -1,6 +1,7 @@
 
 using Printf
 import Armon: @i, @indexing_vars, ArmonData, init_test, time_loop, write_sub_domain_file, test_name
+import Armon: Axis, X_axis, Y_axis, main_variables
 
 
 function cmp_cpu_with_reference(test::Symbol, type::Type; options...)
@@ -18,6 +19,38 @@ function cmp_cpu_with_reference(test::Symbol, type::Type; options...)
 
     @test differences_count == 0
     @test max_diff == 0
+end
+
+
+function axis_invariance(test::Symbol, type::Type, axis::Axis; options...)
+    ref_params = get_reference_params(test, type; options...)
+    dt, cycles, data = run_armon_reference(ref_params)
+
+    (; nx, ny) = ref_params
+    ng = ref_params.nghost
+    lx = ref_params.row_length
+    ly = ref_params.col_length
+
+    if axis == X_axis
+        r = (1:nx-1, :)
+        r_offset = (2:nx, :)
+    else
+        r = (:, 1:ny-1)
+        r_offset = (:, 2:ny)
+    end
+
+    vars = setdiff(main_variables(), (:x, :y))
+    @testset "$var" for var in vars
+        v_data = getfield(host(data), var)
+        v_data = reshape(v_data, lx, ly)  # 1D to 2D array
+        v_data = view(v_data, ng+1:lx-ng, ng+1:ly-ng)  # the nx × ny array of real (non-ghost) data
+
+        # Substract each row/column with its neighbour => if the axis invariance is ok it should be 0
+        # Note that we do not use `isapprox`, there is no tolerance here: invariance should be perfect.
+        errors_count = count(!=(zero(type)), v_data[r...] .- v_data[r_offset...])
+
+        @test errors_count == 0
+    end
 end
 
 
@@ -59,6 +92,10 @@ end
     @testset "$test with $type" for type in (Float32, Float64),
                                     test in (:Sod, :Sod_y, :Sod_circ, :Bizarrium, :Sedov)
         cmp_cpu_with_reference(test, type)
+    end
+
+    @testset "Axis invariance for $test" for (test, axis) in ([:Sod, Y_axis], [:Sod_y, X_axis], [:Bizarrium, Y_axis])
+        axis_invariance(test, Float64, axis)
     end
 
     @testset "Uninitialized values propagation" begin

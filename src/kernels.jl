@@ -339,8 +339,8 @@ function numerical_fluxes!(params::ArmonParameters, data::ArmonDualData, label::
 end
 
 
-function update_EOS!(params::ArmonParameters, data::ArmonData, ::TestCase, range::DomainRange)
-    gamma = data_type(params)(7/5)
+function update_EOS!(params::ArmonParameters, data::ArmonData, t::TestCase, range::DomainRange)
+    gamma = data_type(params)(specific_heat_ratio(t))
     return perfect_gas_EOS!(params, data, range, gamma)
 end
 
