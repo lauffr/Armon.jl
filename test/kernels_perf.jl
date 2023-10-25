@@ -60,7 +60,6 @@ const kernels = [
     :EOS_perfect_gas        => (p, d, r) -> Armon.perfect_gas_EOS!(p, d, r, Armon.data_type(p)(7/5)),
     :EOS_bizarrium          => (p, d, r) -> Armon.bizarrium_EOS!(p, d, r),
     :cell_update            => (p, d, r) -> Armon.cell_update!(p, d, r, p.cycle_dt, d.umat),
-    :cell_update_source     => (p, d, r) -> Armon.cell_update_with_source!(p, d, r, p.cycle_dt, d.x, d.umat, p.test),
     :advection_first_order  => (p, d, r) -> Armon.advection_first_order!(p, d, r, p.cycle_dt, d.work_array_1, d.work_array_2, d.work_array_3, d.work_array_4),
     :advection_second_order => (p, d, r) -> Armon.advection_second_order!(p, d, r, p.cycle_dt, d.work_array_1, d.work_array_2, d.work_array_3, d.work_array_4),
     :projection             => (p, d, r) -> Armon.euler_projection!(p, d, r, p.cycle_dt, d.work_array_1, d.work_array_2, d.work_array_3, d.work_array_4),

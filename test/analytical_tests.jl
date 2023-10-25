@@ -170,12 +170,107 @@ function comp_error(params::ArmonParameters, data::Armon.ArmonData, var::Symbol)
 end
 
 
-function analytical_test(params::ArmonParameters; kwargs...)
-    params.return_data = true
-    state = armon(params)
+function solution(test, x, y; var=:ρ)
+    z = similar(x)
+    for i in eachindex(z)
+        z[i] = getfield(Armon.init_test_params(x[i], y[i], test), var)
+    end
+    return z
+end
 
+
+function print_error(params, device_data)
     for var in (:ρ, :u, :v, :E)
-        err_L₂, err_L∞ = comp_error(params, Armon.device(state.data), var)
+        err_L₂, err_L∞ = comp_error(params, device_data, var)
         @printf("Error for %s: %15.8g (L₂), %15.8g (L∞)\n", var, err_L₂, err_L∞)
     end
+end
+
+
+function analytical_test(params::ArmonParameters)
+    params.return_data = true
+    state = armon(params)
+    print_error(params, Armon.device(state.data))
+    return state
+end
+
+
+function convergence(test::Symbol; steps=1:2:10, kwargs...)
+    opts = Dict{Symbol, Any}(
+        :use_MPI => false, :return_data => true,
+        :projection => :euler_2nd, :nghost => 5
+    )
+    merge!(opts, kwargs)
+
+    nx = 10
+    ny = 10
+    s_nx = 1
+    s_ny = 1
+
+    if test === :Gravity1D
+        ny = 1
+        s_ny = 2
+        opts[:axis_splitting] = :X_only
+    elseif test in (:Gravity2D, :Friction)
+        s_nx = sqrt(2)
+        s_ny = sqrt(2)
+    else
+        error("unknown test: $test")
+    end
+
+    points_count = length(steps)
+    incr = step(steps)
+
+    vars = (:ρ, :u, :v, :E)
+    N = zeros(Int, points_count)
+    errs_L₂ = NamedTuple(Iterators.map(v -> v => zeros(Float64, points_count), vars))
+    errs_L∞ = NamedTuple(Iterators.map(v -> v => zeros(Float64, points_count), vars))
+
+    for s in 1:points_count
+        params = ArmonParameters(; test, nx, ny, opts...)
+        out_data = Armon.device(armon(params).data)
+
+        N[s] = nx * ny
+        for var in (:ρ, :u, :v, :E)
+            err_L₂, err_L∞ = comp_error(params, out_data, var)
+            errs_L₂[var][s] = err_L₂
+            errs_L∞[var][s] = err_L∞
+        end
+
+        nx = Int(round(nx * s_nx^incr))
+        ny = Int(round(ny * s_ny^incr))
+    end
+
+    return N, errs_L₂, errs_L∞
+end
+
+
+using Gaston
+
+function convergence_plot(test::Symbol; steps=1:2:10, vars=[:ρ, :u, :v, E], kwargs...)
+    N, errs_L₂, errs_L∞ = convergence(test; steps, kwargs...)
+
+    ref_L₂(N, err_L₂) = (first(err_L₂) / first(N)^(-2)) .* (N .^ (-2))
+
+    min_err = minimum(map(minimum, errs_L₂[vars]))
+    max_err = maximum(map(maximum, errs_L₂[vars]))
+
+    axes_options = (;
+        grid=:on, xlabel=:N, ylabel=:error, axis="loglog", key="left top",
+        xtics="out format '10^{%L}'", ytics="out format '10^{%L}'",
+        xrange=(minimum(N) * 0.80, maximum(N) * 1.25), yrange=(min_err * 0.50, max_err * 2)
+    )
+
+    plots = []
+    for (i, var) in enumerate(vars)
+        p = plot(N, errs_L₂[var], Gaston.Axes(; axes_options...); leg="'$var - L₂ error'", handle=i)
+        plot!(N, ref_L₂(N, errs_L₂[var]); leg="'$var - L₂ ref'", handle=i, w=:l)
+        # plot!(N, errs_L∞[var]; leg="'$var L∞ error'", handle=i)
+        push!(plots, p)
+    end
+
+    col_count = ceil(Int, sqrt(length(vars)))
+    mplot = Matrix{Union{Gaston.Figure, Nothing}}(nothing, ceil(Int, length(vars) / col_count), col_count)
+    mplot[1:length(plots)] = plots
+    plot(mplot)
 end
