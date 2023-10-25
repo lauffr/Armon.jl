@@ -117,13 +117,17 @@ end
 
 
 @testset "Kokkos" begin
-    @testset "$test with $type" for type in (Float64,),
-                                    test in (:Sod, :Sod_y, :Sod_circ, :Bizarrium, :Sedov)
-        cmp_cpp_with_reference_for(type, test)
+    @testset "Reference" begin
+        @testset "$test with $type" for type in (Float64,),
+                                        test in (:Sod, :Sod_y, :Sod_circ, :Bizarrium, :Sedov)
+            cmp_cpp_with_reference_for(type, test)
+        end
     end
 
-    @testset "Async $test" for test in (:Sod, :Sod_y, :Sod_circ, :Bizarrium, :Sedov)
-        cmp_cpp_with_reference_for(Float64, test; async_comms=true)
+    @testset "Async" begin
+        @testset "$test" for test in (:Sod, :Sod_y, :Sod_circ, :Bizarrium, :Sedov)
+            cmp_cpp_with_reference_for(Float64, test; async_comms=true)
+        end
     end
 
     @testset "Halo exchange" begin

@@ -89,13 +89,17 @@ end
 
 
 @testset "Convergence" begin
-    @testset "$test with $type" for type in (Float32, Float64),
-                                    test in (:Sod, :Sod_y, :Sod_circ, :Bizarrium, :Sedov)
-        cmp_cpu_with_reference(test, type)
+    @testset "Reference" begin
+        @testset "$test with $type" for type in (Float32, Float64),
+                                        test in (:Sod, :Sod_y, :Sod_circ, :Bizarrium, :Sedov)
+            cmp_cpu_with_reference(test, type)
+        end
     end
 
-    @testset "Axis invariance for $test" for (test, axis) in ([:Sod, Y_axis], [:Sod_y, X_axis], [:Bizarrium, Y_axis])
-        axis_invariance(test, Float64, axis)
+    @testset "Axis invariance" begin
+        @testset "$test" for (test, axis) in ([:Sod, Y_axis], [:Sod_y, X_axis], [:Bizarrium, Y_axis])
+            axis_invariance(test, Float64, axis)
+        end
     end
 
     @testset "Uninitialized values propagation" begin
