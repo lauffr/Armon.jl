@@ -128,45 +128,91 @@ function init_test_params(p::Sedov, ::Type{T}) where {T}
 end
 
 
-const BC_FreeFlow    = ( 1,  1)
-const BC_Dirichlet_X = (-1,  1)
-const BC_Dirichlet_Y = ( 1, -1)
+@enum BC FreeFlow Dirichlet
 
 
-function boundary_condition(side::Side, ::Sod)::NTuple{2, Int}
-    return (side == Left || side == Right) ? BC_Dirichlet_X : BC_FreeFlow
+struct Boundaries
+    left::BC
+    right::BC
+    bottom::BC
+    top::BC
+
+    Boundaries(; left, right, bottom, top) = new(left, right, bottom, top)
 end
 
-function boundary_condition(side::Side, ::Sod_y)::NTuple{2, Int}
-    return (side == Left || side == Right) ? BC_FreeFlow : BC_Dirichlet_Y
-end
 
-function boundary_condition(side::Side, ::Sod_circ)::NTuple{2, Int}
-    return (side == Left || side == Right) ? BC_Dirichlet_X : BC_Dirichlet_Y
-end
-
-function boundary_condition(side::Side, ::Bizarrium)::NTuple{2, Int}
-    if side == Left
-        return BC_Dirichlet_X
+function Base.getindex(bounds::Boundaries, side::Side)
+    return if side == Left
+        bounds.left
     elseif side == Right
-        return BC_FreeFlow
+        bounds.right
+    elseif side == Bottom
+        bounds.bottom
     else
-        return BC_Dirichlet_Y
+        bounds.top
     end
 end
 
-function boundary_condition(::Side, ::Sedov)::NTuple{2, Int}
-    return BC_FreeFlow
+
+function boundary_condition(test, side::Side)::NTuple{2, Int}
+    condition = boundary_condition(test)[side]
+    if condition == FreeFlow
+        return (1, 1)
+    else  # if condition == Dirichlet
+        if side in (Left, Right)
+            return (-1, 1)  # mirror along X
+        else
+            return (1, -1)  # mirror along Y
+        end
+    end
 end
 
 
-update_test_params(t::TestCase, ::Axis) = t
+function boundary_condition(::Sod)
+    return Boundaries(
+        left   = Dirichlet,
+        right  = Dirichlet,
+        bottom = FreeFlow,
+        top    = FreeFlow
+    )
+end
 
 
-const SourceTermType = @NamedTuple{ρ::T, u::T, E::T} where T
+function boundary_condition(::Sod_y)
+    return Boundaries(
+        left   = FreeFlow,
+        right  = FreeFlow,
+        bottom = Dirichlet,
+        top    = Dirichlet
+    )
+end
 
 
-# TODO: should be @kernel_function
-function source_term(::T, ::T, ::T, ::TestCase) where {T}
-    return (ρ = zero(T), u = zero(T), E = zero(T))
+function boundary_condition(::Sod_circ)
+    return Boundaries(
+        left   = Dirichlet,
+        right  = Dirichlet,
+        bottom = Dirichlet,
+        top    = Dirichlet
+    )
+end
+
+
+function boundary_condition(::Bizarrium)
+    return Boundaries(
+        left   = Dirichlet,
+        right  = FreeFlow,
+        bottom = Dirichlet,
+        top    = Dirichlet
+    )
+end
+
+
+function boundary_condition(::Sedov)
+    return Boundaries(
+        left   = FreeFlow,
+        right  = FreeFlow,
+        bottom = FreeFlow,
+        top    = FreeFlow
+    )
 end

@@ -23,7 +23,7 @@ end
 
 
 function boundary_conditions!(params::ArmonParameters{T}, data::ArmonDualData, side::Side) where T
-    (u_factor::T, v_factor::T) = boundary_condition(side, params.test)
+    (u_factor::T, v_factor::T) = boundary_condition(params.test, side)
     (i_start, loop_range, stride, d) = boundary_conditions_indexes(params, side)
 
     i_start -= stride  # Adjust for the fact that `@index_1D_lin()` is 1-indexed
