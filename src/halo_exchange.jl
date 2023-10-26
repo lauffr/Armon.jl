@@ -1,5 +1,5 @@
 
-@generic_kernel function boundaryConditions!(
+@generic_kernel function boundary_conditions!(
     stencil_width::Int, stride::Int, i_start::Int, d::Int, u_factor::T, v_factor::T,
     rho::V, umat::V, vmat::V, pmat::V, cmat::V, gmat::V, Emat::V
 ) where {T, V <: AbstractArray{T}}
@@ -22,13 +22,13 @@
 end
 
 
-function boundaryConditions!(params::ArmonParameters{T}, data::ArmonDualData, side::Side) where T
-    (u_factor::T, v_factor::T) = boundaryCondition(side, params.test)
+function boundary_conditions!(params::ArmonParameters{T}, data::ArmonDualData, side::Side) where T
+    (u_factor::T, v_factor::T) = boundary_condition(params.test, side)
     (i_start, loop_range, stride, d) = boundary_conditions_indexes(params, side)
 
     i_start -= stride  # Adjust for the fact that `@index_1D_lin()` is 1-indexed
 
-    boundaryConditions!(params, device(data), loop_range, stride, i_start, d, u_factor, v_factor)
+    boundary_conditions!(params, device(data), loop_range, stride, i_start, d, u_factor, v_factor)
 end
 
 
@@ -146,7 +146,7 @@ function halo_exchange!(params::ArmonParameters, data::ArmonDualData, side::Side
 end
 
 
-function boundaryConditions!(params::ArmonParameters, data::ArmonDualData, sides::Tuple{Vararg{Side}})
+function boundary_conditions!(params::ArmonParameters, data::ArmonDualData, sides::Tuple{Vararg{Side}})
     # TODO : use active RMA instead? => maybe but it will (maybe) not work with GPUs: 
     #   https://www.open-mpi.org/faq/?category=runcuda
     # TODO : use CUDA/ROCM-aware MPI
@@ -165,25 +165,25 @@ function boundaryConditions!(params::ArmonParameters, data::ArmonDualData, sides
         if has_neighbour(params, side)
             halo_exchange!(params, data, side)
         else
-            boundaryConditions!(params, data, side)
+            boundary_conditions!(params, data, side)
         end
     end
 end
 
 
-function boundaryConditions!(params::ArmonParameters, data::ArmonDualData, sides::Symbol)
+function boundary_conditions!(params::ArmonParameters, data::ArmonDualData, sides::Symbol)
     if sides === :outer_lb
         side = params.current_axis == X_axis ? Left : Bottom
-        boundaryConditions!(params, data, (side,))
+        boundary_conditions!(params, data, (side,))
     elseif sides === :outer_rt
         side = params.current_axis == X_axis ? Right : Top
-        boundaryConditions!(params, data, (side,))
+        boundary_conditions!(params, data, (side,))
     else
         solver_error(:config, "Unknown sides: $sides")
     end
 end
 
 
-function boundaryConditions!(params::ArmonParameters, data::ArmonDualData)
-    boundaryConditions!(params, data, sides_along(params.current_axis))
+function boundary_conditions!(params::ArmonParameters, data::ArmonDualData)
+    boundary_conditions!(params, data, sides_along(params.current_axis))
 end

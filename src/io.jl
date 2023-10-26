@@ -166,20 +166,41 @@ function read_sub_domain_file!(params::ArmonParameters, data::ArmonDataOrDual, f
     end
 end
 
+
+function write_time_step_file(params::ArmonParameters, file_name::String)
+    file_path = build_file_path(params, file_name)
+
+    p = params.output_precision
+    format = Printf.Format("%#$(p+7).$(p)e\n")
+
+    open(file_path, "w") do file
+        Printf.format(file, format, params.curr_cycle_dt)
+    end
+end
+
+
+function read_time_step_file(params::ArmonParameters{T}, file_name::String) where {T}
+    file_path = build_file_path(params, file_name)
+
+    open(file_path, "r") do file
+        return parse(T, readchomp(file))
+    end
+end
+
 #
 # Comparison functions
 #
 
 function compare_data(label::String, params::ArmonParameters,
-        ref_data::ArmonData{V}, our_data::ArmonData{V}; mask=nothing) where V
+        ref_data::ArmonData, our_data::ArmonData; mask=nothing, vars=saved_variables())
     (; row_length, nghost, nbcell, comparison_tolerance) = params
     different = false
 
-    for name in saved_variables()
+    for name in vars
         ref_val = getfield(ref_data, name)
         our_val = getfield(our_data, name)
 
-        diff_mask = .~ isapprox.(ref_val, our_val; atol=comparison_tolerance)
+        diff_mask = .~ isapprox.(ref_val, our_val; rtol=comparison_tolerance)
         !params.write_ghosts && (diff_mask .*= our_data.domain_mask)
         !isnothing(mask) && (diff_mask .*= mask)
         diff_count = sum(diff_mask)
@@ -193,8 +214,11 @@ function compare_data(label::String, params::ArmonParameters,
                 for idx in 1:nbcell
                     !diff_mask[idx] && continue
                     i, j = ((idx-1) % row_length) + 1 - nghost, ((idx-1) ÷ row_length) + 1 - nghost
-                    @printf(" - %5d (%3d,%3d): %10.5g ≢ %10.5g (%10.5g)\n", idx, i, j, 
-                        ref_val[idx], our_val[idx], ref_val[idx] - our_val[idx])
+                    val_diff = ref_val[idx] - our_val[idx]
+                    diff_ulp = val_diff / eps(ref_val[idx])
+                    abs(diff_ulp) > 1e10 && (diff_ulp = Inf)
+                    @printf(" - %5d (%3d,%3d): %10.5g ≢ %10.5g (%11.5g, ulp: %8g)\n", idx, i, j, 
+                        ref_val[idx], our_val[idx], val_diff, diff_ulp)
                 end
             else
                 println()
@@ -255,16 +279,29 @@ function step_checkpoint(params::ArmonParameters, data::ArmonDualData, step_labe
         h_data = host(data)
 
         step_file_name = params.output_file * @sprintf("_%03d_%s", params.cycle, step_label)
-        step_file_name *= isnothing(params.axis) ? "" : "_" * string(params.axis)[1:1]
+        step_file_name *= "_" * string(params.current_axis)[1]
 
         if params.is_ref
-            write_sub_domain_file(params, h_data, step_file_name; no_msg=true)
+            if step_label == "time_step"
+                write_time_step_file(params, step_file_name)
+            else
+                write_sub_domain_file(params, h_data, step_file_name; no_msg=true)
+            end
         else
-            different = compare_with_file(params, h_data, step_file_name, step_label)
+            if step_label == "time_step"
+                ref_dt = read_time_step_file(params, step_file_name)
+                different = isapprox(ref_dt, params.curr_cycle_dt; rtol=params.comparison_tolerance)
+                @printf("Time step difference: ref Δt = %.18f, Δt = %.18f, diff = %.18f\n",
+                        ref_dt, params.curr_cycle_dt, ref_dt - params.curr_cycle_dt)
+            else
+                different = compare_with_file(params, h_data, step_file_name, step_label)
+            end
+
             if different
                 write_sub_domain_file(params, h_data, step_file_name * "_diff"; no_msg=true)
                 println("Difference file written to $(step_file_name)_diff")
             end
+
             return different
         end
     end

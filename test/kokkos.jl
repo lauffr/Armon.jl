@@ -19,11 +19,14 @@ end
 
 
 function cmp_cpp_with_reference_for(type, test; kwargs...)
-    cmake_options = ["-DCHECK_VIEW_ORDER=ON"]
-    ref_params = get_reference_params(test, type; use_kokkos=true, cmake_options, kwargs...)
+    debug_kernels = true
+    armon_cpp_lib_src = TEST_KOKKOS_PATH
+    use_md_iter = true
+    use_simd = !use_md_iter
+    ref_params = get_reference_params(test, type; use_kokkos=true, debug_kernels, armon_cpp_lib_src, use_md_iter, use_simd, kwargs...)
     dt, cycles, data = run_armon_cpp_reference(ref_params)
     ref_data = ArmonData(ref_params)
-    
+
     differences_count, max_diff = compare_with_reference_data(ref_params, dt, cycles, host(data), ref_data)
 
     if differences_count > 0 && WRITE_FAILED
@@ -37,8 +40,11 @@ end
 
 
 function cmp_halo_exchange_function(side; kwargs...)
-    cmake_options = ["-DCHECK_VIEW_ORDER=ON"]
-    kokkos_params = get_reference_params(:Sod, Float64; use_kokkos=true, debug_indexes=true, cmake_options, kwargs...)
+    debug_kernels = true
+    armon_cpp_lib_src = TEST_KOKKOS_PATH
+    use_md_iter = true
+    use_simd = !use_md_iter
+    kokkos_params = get_reference_params(:Sod, Float64; use_kokkos=true, debug_indexes=true, debug_kernels, armon_cpp_lib_src, use_md_iter, use_simd, kwargs...)
     ref_params = get_reference_params(:Sod, Float64; use_kokkos=false, debug_indexes=true, kwargs...)
 
     kokkos_params.comm_array_size = max(kokkos_params.nx, kokkos_params.ny) * kokkos_params.nghost * 7
@@ -111,13 +117,17 @@ end
 
 
 @testset "Kokkos" begin
-    @testset "$test with $type" for type in (Float64,),
-                                    test in (:Sod, :Sod_y, :Sod_circ, :Bizarrium, :Sedov)
-        cmp_cpp_with_reference_for(type, test)
+    @testset "Reference" begin
+        @testset "$test with $type" for type in (Float64,),
+                                        test in (:Sod, :Sod_y, :Sod_circ, :Bizarrium, :Sedov)
+            cmp_cpp_with_reference_for(type, test)
+        end
     end
 
-    @testset "Async $test" for test in (:Sod, :Sod_y, :Sod_circ, :Bizarrium, :Sedov)
-        cmp_cpp_with_reference_for(Float64, test; async_comms=true)
+    @testset "Async" begin
+        @testset "$test" for test in (:Sod, :Sod_y, :Sod_circ, :Bizarrium, :Sedov)
+            cmp_cpp_with_reference_for(Float64, test; async_comms=true)
+        end
     end
 
     @testset "Halo exchange" begin

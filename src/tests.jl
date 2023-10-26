@@ -1,7 +1,7 @@
 
 abstract type TestCase end
-abstract type TwoStateTestCase <: TestCase end
 
+abstract type TwoStateTestCase <: TestCase end
 struct Sod       <: TwoStateTestCase end
 struct Sod_y     <: TwoStateTestCase end
 struct Sod_circ  <: TwoStateTestCase end
@@ -42,8 +42,12 @@ default_max_time(::Union{Sod, Sod_y, Sod_circ}) = 0.20
 default_max_time(::Bizarrium) = 80e-6
 default_max_time(::Sedov) = 1.0
 
+specific_heat_ratio(::Union{Sod, Sod_y, Sod_circ, Bizarrium, Sedov}) = 7/5
+
 is_conservative(::TestCase) = true
 is_conservative(::Bizarrium) = false
+
+has_source_term(::TestCase) = false
 
 Base.show(io::IO, ::Sod)       = print(io, "Sod shock tube")
 Base.show(io::IO, ::Sod_y)     = print(io, "Sod shock tube (along the Y axis)")
@@ -51,77 +55,164 @@ Base.show(io::IO, ::Sod_circ)  = print(io, "Sod shock tube (cylindrical symmetry
 Base.show(io::IO, ::Bizarrium) = print(io, "Bizarrium")
 Base.show(io::IO, ::Sedov)     = print(io, "Sedov")
 
-# TODO : use 0.0625 for Sod_circ since 1/8 makes no sense and is quite arbitrary
 test_region_high(x::T, _::T, ::Sod)       where T = x ≤ 0.5
 test_region_high(_::T, y::T, ::Sod_y)     where T = y ≤ 0.5
-test_region_high(x::T, y::T, ::Sod_circ)  where T = (x - T(0.5))^2 + (y - T(0.5))^2 ≤ T(0.125)
+test_region_high(x::T, y::T, ::Sod_circ)  where T = (x - T(0.5))^2 + (y - T(0.5))^2 ≤ T(0.09)  # radius of 0.3 
 test_region_high(x::T, _::T, ::Bizarrium) where T = x ≤ 0.5
 test_region_high(x::T, y::T, s::Sedov{T}) where T = x^2 + y^2 ≤ s.r^2
 
-function init_test_params(::Union{Sod, Sod_y, Sod_circ})
-    return (
-        #= γ      =# 7/5,
-        #= high_ρ =# 1.,
-        #= low_ρ  =# 0.125,
-        #= high_E =# 2.5,
-        #= low_E  =# 2.0,
-        #= high_u =# 0.,
-        #= low_u  =# 0.,
-        #= high_v =# 0.,
-        #= low_v  =# 0.
-    )
-end
 
-function init_test_params(::Bizarrium)
-    return (
-        #= γ      =# 2,
-        #= high_ρ =# 1.42857142857e+4,
-        #= low_ρ  =# 10000.,
-        #= high_E =# 4.48657821135e+6,
-        #= low_E  =# 0.5 * 250^2,
-        #= high_u =# 0.,
-        #= low_u  =# 250.,
-        #= high_v =# 0.,
-        #= low_v  =# 0.
-    )
-end
+struct InitTestParamsTwoState{T}
+    high_ρ::T
+    low_ρ::T
+    high_E::T
+    low_E::T
+    high_u::T
+    low_u::T
+    high_v::T
+    low_v::T
 
-function init_test_params(p::Sedov)
-    return (
-        #= γ      =# 7/5,
-        #= high_ρ =# 1.,
-        #= low_ρ  =# 1.,
-        #= high_E =# 0.851072 / (π * p.r^2),
-        #= low_E  =# 2.5e-14,
-        #= high_u =# 0.,
-        #= low_u  =# 0.,
-        #= high_v =# 0.,
-        #= low_v  =# 0.
-    )
-end
-
-function boundaryCondition(side::Side, ::Sod)::NTuple{2, Int}
-    return (side == Left || side == Right) ? (-1, 1) : (1, 1)
-end
-
-function boundaryCondition(side::Side, ::Sod_y)::NTuple{2, Int}
-    return (side == Left || side == Right) ? (1, 1) : (1, -1)
-end
-
-function boundaryCondition(side::Side, ::Sod_circ)::NTuple{2, Int}
-    return (side == Left || side == Right) ? (-1, 1) : (1, -1)
-end
-
-function boundaryCondition(side::Side, ::Bizarrium)::NTuple{2, Int}
-    if side == Left
-        return (-1, 1)
-    elseif side == Right
-        return (1, 1)
-    else
-        return (1, -1)
+    function InitTestParamsTwoState(;
+        high_ρ::T, low_ρ::T, high_E::T, low_E::T, high_u::T, low_u::T, high_v::T, low_v::T
+    ) where {T}
+        new{T}(high_ρ, low_ρ, high_E, low_E, high_u, low_u, high_v, low_v)
     end
 end
 
-function boundaryCondition(::Side, ::Sedov)::NTuple{2, Int}
-    return (1, 1)
+
+struct InitTestParams{T}
+    ρ::T
+    E::T
+    u::T
+    v::T
+end
+
+
+function init_test_params(::Union{Sod, Sod_y, Sod_circ}, ::Type{T}) where {T}
+    return InitTestParamsTwoState(
+        high_ρ = T(1.),
+         low_ρ = T(0.125),
+        high_E = T(2.5),
+         low_E = T(2.0),
+        high_u = zero(T),
+         low_u = zero(T),
+        high_v = zero(T),
+         low_v = zero(T)
+    )
+end
+
+function init_test_params(::Bizarrium, ::Type{T}) where {T}
+    return InitTestParamsTwoState(
+        high_ρ = T(1.42857142857e+4),
+         low_ρ = T(10000.),
+        high_E = T(4.48657821135e+6),
+         low_E = T(0.5 * 250^2),
+        high_u = zero(T),
+         low_u = T(250.),
+        high_v = zero(T),
+         low_v = zero(T)
+    )
+end
+
+function init_test_params(p::Sedov, ::Type{T}) where {T}
+    return InitTestParamsTwoState(
+        high_ρ = T(1.),
+         low_ρ = T(1.),
+        high_E = T((1/1.033)^5 / (π * p.r^2)),  # E so that the blast wave reaches r=1 at t=1 (E is spread in a circle of radius `p.r`)
+         low_E = T(2.5e-14),
+        high_u = zero(T),
+         low_u = zero(T),
+        high_v = zero(T),
+         low_v = zero(T)
+    )
+end
+
+
+@enum BC FreeFlow Dirichlet
+
+
+struct Boundaries
+    left::BC
+    right::BC
+    bottom::BC
+    top::BC
+
+    Boundaries(; left, right, bottom, top) = new(left, right, bottom, top)
+end
+
+
+function Base.getindex(bounds::Boundaries, side::Side)
+    return if side == Left
+        bounds.left
+    elseif side == Right
+        bounds.right
+    elseif side == Bottom
+        bounds.bottom
+    else
+        bounds.top
+    end
+end
+
+
+function boundary_condition(test, side::Side)::NTuple{2, Int}
+    condition = boundary_condition(test)[side]
+    if condition == FreeFlow
+        return (1, 1)
+    else  # if condition == Dirichlet
+        if side in (Left, Right)
+            return (-1, 1)  # mirror along X
+        else
+            return (1, -1)  # mirror along Y
+        end
+    end
+end
+
+
+function boundary_condition(::Sod)
+    return Boundaries(
+        left   = Dirichlet,
+        right  = Dirichlet,
+        bottom = FreeFlow,
+        top    = FreeFlow
+    )
+end
+
+
+function boundary_condition(::Sod_y)
+    return Boundaries(
+        left   = FreeFlow,
+        right  = FreeFlow,
+        bottom = Dirichlet,
+        top    = Dirichlet
+    )
+end
+
+
+function boundary_condition(::Sod_circ)
+    return Boundaries(
+        left   = Dirichlet,
+        right  = Dirichlet,
+        bottom = Dirichlet,
+        top    = Dirichlet
+    )
+end
+
+
+function boundary_condition(::Bizarrium)
+    return Boundaries(
+        left   = Dirichlet,
+        right  = FreeFlow,
+        bottom = Dirichlet,
+        top    = Dirichlet
+    )
+end
+
+
+function boundary_condition(::Sedov)
+    return Boundaries(
+        left   = FreeFlow,
+        right  = FreeFlow,
+        bottom = FreeFlow,
+        top    = FreeFlow
+    )
 end

@@ -5,7 +5,7 @@ using Armon
 import Armon: SolverException
 using Test
 
-WRITE_FAILED = parse(Bool, get(ENV, "WRITE_FAILED", "false"))  # TODO: impl for non-mpi tests
+WRITE_FAILED = parse(Bool, get(ENV, "WRITE_FAILED", "false"))
 NO_MPI = parse(Bool, get(ENV, "NO_MPI", "false"))
 
 if !NO_MPI
@@ -58,10 +58,10 @@ filter!(!isempty, main_options)
 main_options = main_options .|> Symbol |> union
 
 if :all in main_options
-    expanded_options = [:quality, :stability, :domains, :convergence, :conservation, :kernels, :kokkos,
-                        :gpu, :performance, :async, :mpi]
+    expanded_options = [:quality, :stability, :domains, :convergence, :conservation, :kernels,
+                        :kokkos, :gpu, :performance, :async, :mpi]
 elseif :short in main_options
-    expanded_options = [:quality, :stability, :domains, :convergence, :conservation, :kernels, :kokkos]
+    expanded_options = [:quality, :stability, :domains, :convergence, :conservation, :kernels]
 else
     expanded_options = []
 end
@@ -72,6 +72,7 @@ union!(main_options)
 
 ENV["TEST_KOKKOS_MPI"] = parse(Bool, get(ENV, "TEST_KOKKOS_MPI", "false")) || (:kokkos in main_options)
 TEST_KOKKOS_BACKEND = ENV["TEST_KOKKOS_BACKEND"] = get(ENV, "TEST_KOKKOS_BACKEND", "OPENMP")
+TEST_KOKKOS_PATH = get(ENV, "TEST_KOKKOS_PATH", nothing)
 
 
 function do_tests(tests_to_do)

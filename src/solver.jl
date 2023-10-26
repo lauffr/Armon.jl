@@ -29,15 +29,19 @@ end
 
 function solver_cycle(params::ArmonParameters, data::ArmonDualData)
     if params.cycle == 0
+        step_checkpoint(params, data, "init_test") && return true
         @section "EOS_init" update_EOS!(params, data, :full)
         step_checkpoint(params, data, "EOS_init") && return true
     end
 
-    (@section "time_step" time_step(params, data)) && return true
-
-    if params.cycle == 0
-        params.curr_cycle_dt = params.next_cycle_dt
+    if params.async_comms && !haskey(params.tasks_storage, :lb)
+        params.tasks_storage[:lb] = nothing
+        params.tasks_storage[:rt] = nothing
+        params.tasks_storage[:inner] = nothing
     end
+
+    (@section "time_step" time_step(params, data)) && return true
+    @checkpoint("time_step") && return true
 
     @section "$axis" for (axis, dt_factor) in split_axes(params)
         update_axis_parameters(params, axis)
@@ -80,35 +84,35 @@ function solver_cycle(params::ArmonParameters, data::ArmonDualData)
             wait(params)
 
             @sync begin
-                @async begin
-                    @section "BC lb"     async=true boundaryConditions!(params, data, :outer_lb)
-                    @section "fluxes lb" async=true numericalFluxes!(params, data, :outer_lb)
+                @reuse_tls params.tasks_storage[:lb] @async begin
+                    @section "BC lb"     async=true boundary_conditions!(params, data, :outer_lb)
+                    @section "fluxes lb" async=true numerical_fluxes!(params, data, :outer_lb)
                     wait(params)  # We must wait for the CUDA/HIP stream to end before ending any task
                 end
 
-                @async begin
-                    @section "BC rt"     async=true boundaryConditions!(params, data, :outer_rt)
-                    @section "fluxes rt" async=true numericalFluxes!(params, data, :outer_rt)
+                @reuse_tls params.tasks_storage[:rt] @async begin
+                    @section "BC rt"     async=true boundary_conditions!(params, data, :outer_rt)
+                    @section "fluxes rt" async=true numerical_fluxes!(params, data, :outer_rt)
                     wait(params)
                 end
 
-                @async begin
-                    @section "fluxes"    async=true numericalFluxes!(params, data, :inner)
+                @reuse_tls params.tasks_storage[:inner] @async begin
+                    @section "fluxes"    async=true numerical_fluxes!(params, data, :inner)
                     wait(params)
                 end
             end
 
-            @checkpoint("numericalFluxes") && return true
+            @checkpoint("numerical_fluxes") && return true
         else
-            @section "BC" boundaryConditions!(params, data)
-            @checkpoint("boundaryConditions") && return true
+            @section "BC" boundary_conditions!(params, data)
+            @checkpoint("boundary_conditions") && return true
 
-            @section "fluxes" numericalFluxes!(params, data, :full)
-            @checkpoint("numericalFluxes") && return true
+            @section "fluxes" numerical_fluxes!(params, data, :full)
+            @checkpoint("numerical_fluxes") && return true
         end
 
-        @section "update" cellUpdate!(params, data)
-        @checkpoint("cellUpdate") && return true
+        @section "update" cell_update!(params, data)
+        @checkpoint("cell_update") && return true
 
         @section "remap" projection_remap!(params, data)
         @checkpoint("projection_remap") && return true
@@ -125,6 +129,7 @@ function time_loop(params::ArmonParameters, data::ArmonDualData)
     params.time = 0
     params.curr_cycle_dt = 0
     params.next_cycle_dt = 0
+    update_axis_parameters(params, X_axis)
 
     total_cycles_time = 0.
 

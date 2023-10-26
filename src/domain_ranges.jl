@@ -119,6 +119,7 @@ Holds indexing information for all steps of the solver.
 mutable struct StepsRanges
     direction::Axis
     real_domain::DomainRange
+    full_domain::DomainRange
 
     EOS::DomainRange
     fluxes::DomainRange
@@ -138,7 +139,8 @@ end
 function StepsRanges()
     StepsRanges(
         X_axis,
+        DomainRange(), DomainRange(),
+        DomainRange(), DomainRange(), DomainRange(), DomainRange(), DomainRange(),
         DomainRange(), DomainRange(), DomainRange(), DomainRange(), DomainRange(), DomainRange(),
-        DomainRange(), DomainRange(), DomainRange(), DomainRange(), DomainRange(), DomainRange()
     )
 end
