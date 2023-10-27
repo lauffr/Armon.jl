@@ -42,7 +42,7 @@ function __init__()
         :CUDA_kernels,
         cuda_kernel_start,
         cuda_kernel_end
-    )))    
+    )))
 end
 
 end

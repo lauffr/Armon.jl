@@ -3,6 +3,224 @@ abstract type BackendParams end
 struct EmptyParams <: BackendParams end
 
 
+"""
+    ArmonParameters(; options...)
+
+The parameters and current state of the solver.
+
+The state is reset at each call to [`armon`](@ref).
+
+There are many options. Each backend can add their own.
+
+
+# Options
+
+
+## Backend and MPI
+
+    device = :CUDA
+
+Device to use. Supported values:
+ - `:CPU_HP`: `Polyester.jl` CPU multithreading  (default if `use_gpu=false`)
+ - `:CUDA`: `CUDA.jl` GPU (default if `use_gpu=true`)
+ - `:ROCM`: `AMDGPU.jl` GPU
+ - `:CPU`: `KernelAbstractions.jl` CPU multithreading (using the standard `Threads.jl`)
+
+
+    use_MPI = true, px = 1, py = 1, reorder_grid = true, global_comm = nothing
+
+MPI config. The MPI domain will be a `px × py` process grid.
+`global_comm` is the global communicator to use, defaults to `MPI.COMM_WORLD`.
+`reorder_grid` is passed to `MPI.Cart_create`.
+
+
+## Kernels
+
+    async_comms = false
+
+`async_comms` use asynchronous boundary conditions kernels, including asynchronous MPI communications.
+Only for GPU backends.
+
+
+    use_threading = true, use_simd = true
+
+Switches for [`CPU_HP`](@ref) kernels.
+`use_threading` enables [`@threaded`](@ref) for outer loops.
+`use_simd` enables [`@simd_loop`](@ref) for inner loops.
+
+
+    use_gpu = false
+
+Enables the use of `KernelAbstractions.jl` kernels.
+
+
+    use_kokkos = false
+
+Use kernels for `Kokkos.jl`.
+
+
+    block_size = 1024
+
+GPU block size.
+
+
+## Profiling
+
+    profiling = Symbol[]
+
+List of profiling callbacks to use:
+ - `:TimerOutputs`: `TimerOutputs.jl` sections (added if `measure_time=true`)
+ - `:NVTX_sections`: `NVTX.jl` sections
+ - `:NVTX_kernels`: `NVTX.jl` sections for kernels
+ - `:CUDA_kernels`: equivalent to `CUDA.@profile` in front of all kernels
+
+
+    measure_time = true
+
+`measure_time=false` can remove any overhead caused by profiling.
+
+
+    time_async = true
+
+`time_async=false` will add a barrier at the end of every section. Useful for GPU kernels.
+
+
+## Scheme and CFD solver
+
+    scheme = :GAD, riemann = :acoustic, riemann_limiter = :minmod
+
+`scheme` is the Riemann solver scheme to use: `:Godunov` (1st order) or `:GAD` (2nd order, +limiter).
+`riemann` is the type of Riemann solver, only `:acoustic`.
+`riemann_limiter` is the limiter to use for `scheme=:GAD`: `:no_limiter`, `:minmod` or `:superbee`.
+
+
+    projection = :euler
+
+Scheme for the Eulerian remap step: `:euler` (1st order), `:euler_2nd` (2nd order, +minmod limiter)
+
+
+    axis_splitting = :Sequential
+
+Axis splitting to use:
+ - `:Sequential`: X then Y
+ - `:SequentialSym`: X and Y then Y and X, alternating
+ - `:Strang`: ½X, Y, ½X then ½Y, X, ½Y, alternating (½ is for halved time step)
+ - `:X_only`
+ - `:Y_only`
+
+
+    nx = 10, ny = 10
+
+Number of cells of the global domain in the `x` and `y` axes respectively.
+
+
+    nghost = 2
+
+Number of ghost cells. Must be greater or equal to the minimum number of ghost cells (min 1,
+`scheme=:GAD` adds one, `projection=:euler_2nd` adds one, `scheme=:GAD` + `projection=:euler_2nd`
+adds another one)
+
+
+    stencil_width = nothing
+
+Overrides the number of cells over which the boundary conditions are applied to.
+Defaults to the number of ghost cells.
+
+
+    Dt = 0., cst_dt = false, dt_on_even_cycles = false
+
+`Dt` is the initial time step, it is computed after initialization by default.
+If `cst_dt=true` then the time step is always `Dt` and no reduction over the entire domain occurs. 
+If `dt_on_even_cycles=true` then then time step is only updated at even cycles (the first cycle is
+even).
+
+
+    ieee_bits = 64
+
+Main data type. `32` for `Float32`, `64` for `Float64`.
+
+
+## Test case and domain
+
+    test = :Sod, domain_size = nothing, origin = nothing
+
+`test` is the test case name to use:
+ - `:Sod`: Sod shock tube test
+ - `:Sod_y`: Sod shock tube test along the Y axis
+ - `:Sod_circ`: Circular Sod shock tube test (centered in the domain)
+ - `:Bizarrium`: Bizarrium test, similar to the Sod shock tube but with a special equation of state
+ - `:Sedov`: Sedov blast-wave test (centered in the domain, reaches the border at `t=1` by default)
+
+
+    cfl = 0., maxtime = 0., maxcycle = 500_000
+
+`cfl` defaults to the test's default value, same for `maxtime`.
+The solver stops when `t` reaches `maxtime` or `maxcycle` iterations were done (`maxcycle=0` stops
+after initialization).
+
+
+    debug_indexes = false
+
+`debug_indexes=true` sets all variables to their index in the array. Use with `maxcycle=0`.
+
+
+## Output
+
+    silent = 0
+
+`silent=0` for maximum verbosity. `silent=3` doesn't print info at each cycle. `silent=5` doesn't
+print anything.
+
+
+    output_dir = ".", output_file = "output"
+
+`joinpath(output_dir, output_file)` will be path to the output file.
+
+
+    write_output = false, write_ghosts = false
+
+`write_output=true` will write all `saved_variables` to the output file.
+If `write_ghosts=true`, ghost cells will also be included.
+
+
+    write_slices = false
+
+Will write all `saved_variables` to 3 output files, one for the middle X row, another for the middle
+Y column, and another for the diagonal. If `write_ghosts=true`, ghost cells will also be included.
+
+
+    output_precision = nothing
+
+Numbers are saved with `output_precision` digits of precision. Defaults to enough numbers for an
+exact decimal representation.
+
+
+    animation_step = 0
+
+If `animation_step ≥ 1`, then every `animation_step` cycles, variables will be saved as with
+`write_output=true`.
+
+
+    compare = false, is_ref = false, comparison_tolerance = 1e-10
+
+If `compare=true`, then at every sub step of each iteration of the solver all variables will:
+ - (`is_ref=false`) be compared with a reference file found in `output_dir`
+ - (`is_ref=true`) be saved to a reference file in `output_dir`
+When comparing, a relative `comparison_tolerance` (the `rtol` kwarg of `isapprox`) is accepted
+between values.
+
+
+    check_result = false
+
+Check if conservation of mass and energy is verified between initialization and the last iteration.
+An error is thrown otherwise. Accepts a relative `comparison_tolerance`.
+
+
+    return_data = false
+
+If `return_data=true`, then in the [`SolverStats`](@ref) returned by [`armon`](@ref), the `data`
+field will contain the [`ArmonDualData`](@ref) used by the solver.
+"""
 mutable struct ArmonParameters{Flt_T, Device, DeviceParams}
     # Test problem type, riemann solver and solver scheme
     test::TestCase
