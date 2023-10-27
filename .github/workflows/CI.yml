@@ -33,7 +33,7 @@ jobs:
         with:
           # TODO: remove this when Kokkos.jl is published
           repository: Keluaa/Kokkos.jl
-          path: ../Kokkos.jl
+          path: Kokkos.jl
       - uses: julia-actions/setup-julia@v1
         with:
           version: ${{ matrix.version }}
@@ -41,7 +41,7 @@ jobs:
       - uses: julia-actions/cache@v1
       - uses: julia-actions/julia-buildpkg@v1
       - name: Dev Kokkos.jl
-        run: julia --project=test/ -e 'using Pkg; Pkg.develop(joinpath(ENV["GITHUB_WORKSPACE"], "../Kokkos.jl"))'
+        run: julia --project=test/ -e 'using Pkg; Pkg.develop(joinpath(ENV["GITHUB_WORKSPACE"], "Kokkos.jl"))'
       - uses: julia-actions/julia-runtest@v1
         env:
           JULIA_NUM_THREADS: 2
