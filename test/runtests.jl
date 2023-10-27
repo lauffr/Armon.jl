@@ -50,7 +50,7 @@ if isinteractive()
     printstyled(stdout, menu; color=:light_green)
     raw_main_options = readline()
 else
-    raw_main_options = isempty(ARGS) ? "all" : join(ARGS, ", ")
+    raw_main_options = isempty(ARGS) ? "short" : join(ARGS, ", ")
 end
 
 main_options = split(raw_main_options, ',') .|> strip .|> lowercase
