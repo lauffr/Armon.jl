@@ -39,7 +39,6 @@ julia = "1.9"
 [extras]
 AMDGPU = "21141c5a-9bdb-4563-92ae-f87d6854732e"
 CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
-Kokkos = "3296cea9-b0de-4b57-aba0-ce554b517c3b"
 MPI = "da04e1cc-30fd-572f-bb4f-1f8673147195"
 NVTX = "5da4648a-3479-48b8-97b9-01cb529c0a1f"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
@@ -47,4 +46,4 @@ Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 ThreadPinning = "811555cd-349b-4f26-b7bc-1f208b848042"
 
 [targets]
-test = ["Test", "AMDGPU", "CUDA", "Kokkos", "MPI", "Printf", "ThreadPinning"]
+test = ["Test", "AMDGPU", "CUDA", "MPI", "Printf", "ThreadPinning"]
