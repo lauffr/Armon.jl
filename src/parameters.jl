@@ -90,6 +90,7 @@ mutable struct ArmonParameters{Flt_T, Device, DeviceParams}
     reorder_grid::Bool
     comm_array_size::Int
     async_comms::Bool
+    gpu_aware::Bool
 
     # Tests & Comparison
     compare::Bool
@@ -165,7 +166,7 @@ end
 
 
 function init_MPI(params::ArmonParameters;
-    use_MPI = true, px = 1, py = 1, reorder_grid = true, global_comm = nothing,
+    use_MPI = true, px = 1, py = 1, reorder_grid = true, global_comm = nothing, gpu_aware = true,
     options...
 )
     global_comm = something(global_comm, MPI.COMM_WORLD)
@@ -175,6 +176,10 @@ function init_MPI(params::ArmonParameters;
     if (nx % px != 0) || (ny % py != 0)
         solver_error(:config, "The dimensions of the global domain ($nx x $ny) are not divisible by the number of processors ($px x $py)")
     end
+
+    params.use_MPI = use_MPI
+    params.reorder_grid = reorder_grid
+    params.gpu_aware = gpu_aware
 
     if use_MPI
         !MPI.Initialized() && solver_error(:config, "'use_MPI=true' but MPI has not yet been initialized")
@@ -594,17 +599,18 @@ function print_parameters(io::IO, p::ArmonParameters; pad = 20)
 
     println(io, " ", "─" ^ (pad*2+2))
 
-    domain_str = p.use_MPI ? "sub-domain" : "domain"
-    print_parameter(io, pad, domain_str, "$(p.nx)×$(p.ny) with $(p.nghost) ghosts", nl=false)
-    println(io, " (", @sprintf("%g", p.nx * p.ny), " real cells, ", @sprintf("%g", p.nbcell), " in total)")
-    print_parameter(io, pad, "domain size", join(p.domain_size, " × "), nl=false)
-    println(io, ", origin: (", join(p.origin, ", "), ")")
-
     if p.use_MPI
         print_parameter(io, pad, "global domain", join(p.global_grid, "×"), nl=false)
         print(io, ", spread on a ", join(p.proc_dims, "×"), " process grid")
         print(io, " (", p.reorder_grid ? "" : "not ", "reordered)")
         println(io, " ($(p.proc_size) in total)")
+    end
+
+    domain_str = p.use_MPI ? "sub-domain" : "domain"
+    print_parameter(io, pad, domain_str, "$(p.nx)×$(p.ny) with $(p.nghost) ghosts", nl=false)
+    println(io, " (", @sprintf("%g", p.nx * p.ny), " real cells, ", @sprintf("%g", p.nbcell), " in total)")
+
+    if p.use_MPI
         print_parameter(io, pad, "coords", join(p.cart_coords, "×"), nl=false)
         print(io, " (rank: ", p.rank, "/", p.proc_size-1, ")")
         neighbours_list = filter(≠(MPI.PROC_NULL) ∘ last, p.neighbours) |> collect .|> first
@@ -612,9 +618,13 @@ function print_parameters(io::IO, p::ArmonParameters; pad = 20)
         print(io, ", with $(neighbour_count(p)) neighbour", neighbour_count(p) != 1 ? "s" : "")
         println(io, neighbour_count(p) > 0 ? " on the " * neighbours_str : "")
         print_parameter(io, pad, "async comms", p.async_comms)
+        print_parameter(io, pad, "gpu aware", p.gpu_aware)
     else
         print_parameter(io, pad, "async code path", p.async_comms)
     end
+
+    print_parameter(io, pad, "domain size", join(p.domain_size, " × "), nl=false)
+    println(io, ", origin: (", join(p.origin, ", "), ")")
 end
 
 

@@ -255,36 +255,38 @@ end
 # Copies
 #
 
-function Armon.copy_to_send_buffer!(data::ArmonDualData{D, H, <:Kokkos.ExecutionSpace},
-    array::D, buffer::H
-) where {D, H}
+function Armon.copy_to_send_buffer!(data::ArmonDualData{D, H, B, <:Kokkos.ExecutionSpace},
+    array::D, buffer::B
+) where {D, H, B <: AbstractArray}
+    D == B && return  # Buffers are already on the device
     array_data = Kokkos.subview(array, 1:length(buffer))
     Kokkos.deep_copy(Armon.device_type(data), buffer, array_data)
 end
 
 
-function Armon.copy_from_recv_buffer!(data::ArmonDualData{D, H, <:Kokkos.ExecutionSpace},
-    array::D, buffer::H
-) where {D, H}
+function Armon.copy_from_recv_buffer!(data::ArmonDualData{D, H, B, <:Kokkos.ExecutionSpace},
+    array::D, buffer::B
+) where {D, H, B <: AbstractArray}
+    D == B && return  # Buffers are already on the device
     array_data = Kokkos.subview(array, 1:length(buffer))
     Kokkos.deep_copy(Armon.device_type(data), array_data, buffer)
 end
 
 
-function Armon.get_send_comm_array(data::ArmonDualData{H, H, <:Kokkos.ExecutionSpace},
+function Armon.get_send_comm_array(data::ArmonDualData{D, H, D, <:Kokkos.ExecutionSpace},
     side::Side
-) where H
+) where {D, H}
     # Here only for method disambiguation
-    return Base.invoke(Armon.get_send_comm_array, Tuple{ArmonDualData{H, H, <:Any}, Side}, data, side)
+    return Base.invoke(Armon.get_send_comm_array, Tuple{ArmonDualData{D, H, D, <:Any}, Side}, data, side)
 end
 
 
-function Armon.get_send_comm_array(data::ArmonDualData{D, H, <:Kokkos.ExecutionSpace},
+function Armon.get_send_comm_array(data::ArmonDualData{D, H, B, <:Kokkos.ExecutionSpace},
     side::Side
-) where {D, H}
+) where {D, H, B}
     # Kokkos functions (like deep_copy, etc...) called on the comm array require an actual
     # Kokkos.View, not a view.
-    array_view = Base.invoke(Armon.get_send_comm_array, Tuple{ArmonDualData{D, H, <:Any}, Side}, data, side)
+    array_view = Base.invoke(Armon.get_send_comm_array, Tuple{ArmonDualData{D, H, D, <:Any}, Side}, data, side)
     return Kokkos.subview(parent(array_view), parentindices(array_view))
 end
 
