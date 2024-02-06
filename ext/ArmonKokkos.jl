@@ -101,7 +101,7 @@ function Armon.init_backend(params::ArmonParameters, ::Kokkos.ExecutionSpace;
     option!(armon_cpp, "USE_SINGLE_PRECISION", Armon.data_type(params) == Float32; prefix="")
     option!(armon_cpp, "TRY_ALL_CALLS", debug_kernels; prefix="")
     option!(armon_cpp, "CHECK_VIEW_ORDER", debug_kernels; prefix="")
-    option!(armon_cpp, "USE_SIMD_KERNELS", params.use_simd; prefix="")
+    option!(armon_cpp, "USE_SIMD_KERNELS", use_md_iter == 0 && params.use_simd; prefix="")
     option!(armon_cpp, "USE_2D_ITER", use_md_iter == 1; prefix="")
     option!(armon_cpp, "USE_MD_ITER", use_md_iter >= 2; prefix="")
     option!(armon_cpp, "BALANCE_MD_ITER", use_md_iter == 3; prefix="")
@@ -156,7 +156,14 @@ end
 
 function Armon.print_device_info(io::IO, pad::Int, p::ArmonParameters{<:Any, <:Kokkos.ExecutionSpace})
     Armon.print_parameter(io, pad, "use_kokkos", true)
-    Armon.print_parameter(io, pad, "device", nameof(Kokkos.main_space_type(p.device)))
+
+    device_str = Kokkos.main_space_type(p.device) |> nameof |> string
+    if p.device isa Kokkos.Cuda || p.device isa Kokkos.HIP
+        device_id = Kokkos.BackendFunctions.device_id(p.device)
+        device_str *= " (GPU index: $device_id)"
+    end
+    Armon.print_parameter(io, pad, "device", device_str)
+
     Armon.print_parameter(io, pad, "memory", nameof(Kokkos.main_space_type(Kokkos.memory_space(p.device))))
 end
 
@@ -255,36 +262,38 @@ end
 # Copies
 #
 
-function Armon.copy_to_send_buffer!(data::ArmonDualData{D, H, <:Kokkos.ExecutionSpace},
-    array::D, buffer::H
-) where {D, H}
+function Armon.copy_to_send_buffer!(data::ArmonDualData{D, H, B, <:Kokkos.ExecutionSpace},
+    array::D, buffer::B
+) where {D, H, B <: AbstractArray}
+    D == B && return  # Buffers are already on the device
     array_data = Kokkos.subview(array, 1:length(buffer))
     Kokkos.deep_copy(Armon.device_type(data), buffer, array_data)
 end
 
 
-function Armon.copy_from_recv_buffer!(data::ArmonDualData{D, H, <:Kokkos.ExecutionSpace},
-    array::D, buffer::H
-) where {D, H}
+function Armon.copy_from_recv_buffer!(data::ArmonDualData{D, H, B, <:Kokkos.ExecutionSpace},
+    array::D, buffer::B
+) where {D, H, B <: AbstractArray}
+    D == B && return  # Buffers are already on the device
     array_data = Kokkos.subview(array, 1:length(buffer))
     Kokkos.deep_copy(Armon.device_type(data), array_data, buffer)
 end
 
 
-function Armon.get_send_comm_array(data::ArmonDualData{H, H, <:Kokkos.ExecutionSpace},
+function Armon.get_send_comm_array(data::ArmonDualData{D, H, D, <:Kokkos.ExecutionSpace},
     side::Side
-) where H
+) where {D, H}
     # Here only for method disambiguation
-    return Base.invoke(Armon.get_send_comm_array, Tuple{ArmonDualData{H, H, <:Any}, Side}, data, side)
+    return Base.invoke(Armon.get_send_comm_array, Tuple{ArmonDualData{D, H, D, <:Any}, Side}, data, side)
 end
 
 
-function Armon.get_send_comm_array(data::ArmonDualData{D, H, <:Kokkos.ExecutionSpace},
+function Armon.get_send_comm_array(data::ArmonDualData{D, H, B, <:Kokkos.ExecutionSpace},
     side::Side
-) where {D, H}
+) where {D, H, B}
     # Kokkos functions (like deep_copy, etc...) called on the comm array require an actual
     # Kokkos.View, not a view.
-    array_view = Base.invoke(Armon.get_send_comm_array, Tuple{ArmonDualData{D, H, <:Any}, Side}, data, side)
+    array_view = Base.invoke(Armon.get_send_comm_array, Tuple{ArmonDualData{D, H, D, <:Any}, Side}, data, side)
     return Kokkos.subview(parent(array_view), parentindices(array_view))
 end
 

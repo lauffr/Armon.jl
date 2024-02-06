@@ -69,10 +69,10 @@ saved_variables(data::ArmonData) = map(f -> getfield(data, f), saved_variables()
 """
     memory_required(params::ArmonParameters)
 
-Compute the number of bytes needed on the device to allocate all data arrays
+Compute the number of bytes needed on the device to allocate all data arrays.
 
 While the result is precise, it does not account for additional memory required by MPI buffers and
-the solver.
+the solver, as well as resources shared among MPI processes (i.e. CPU memory).
 """
 memory_required(params::ArmonParameters{T}) where T = memory_required(params.nbcell, T)
 
@@ -84,7 +84,7 @@ end
 
 
 """
-    ArmonDualData{DeviceArray, HostArray, Device}
+    ArmonDualData{DeviceArray, HostArray, BufferArray, Device}
 
 Holds two version of `ArmonData`, one for the `Device` and one for the host, as well as the buffers
 necessary for the halo exchange.
@@ -93,11 +93,11 @@ If the host and device are the same, the `device_data` and `host_data` fields po
 
 `device` might be a `KernelAbstractions.Device`, `AMDGPU.ROCDevice` or `Kokkos.ExecutionSpace`.
 """
-struct ArmonDualData{DeviceArray <: AbstractArray, HostArray <: AbstractArray, Device}
+struct ArmonDualData{DeviceArray <: AbstractArray, HostArray <: AbstractArray, BufferArray <: AbstractArray, Device}
     device       :: Device
     device_data  :: ArmonData{DeviceArray}
     host_data    :: ArmonData{HostArray}
-    comm_buffers :: Dict{Side, NamedTuple{(:send, :recv), NTuple{2, MPI.Buffer{HostArray}}}}
+    comm_buffers :: Dict{Side, NamedTuple{(:send, :recv), NTuple{2, MPI.Buffer{BufferArray}}}}
     requests     :: Dict{Side, NamedTuple{(:send, :recv), NTuple{2, MPI.AbstractRequest}}}
 end
 
@@ -113,15 +113,25 @@ function ArmonDualData(params::ArmonParameters{T}) where T
         host_data = ArmonData(host_array, params.nbcell, params.comm_array_size; alloc_host_kwargs(params)...)
     end
 
-    # In case we don't use MPI: since there is no neighbours no array is allocated
-    comm_buffers = Dict{Side, NamedTuple{(:send, :recv), NTuple{2, MPI.Buffer{array_type(host_data)}}}}()
+    # By changing the types, we change which methods of `copy_to_send_buffer` and `copy_from_recv_buffer`
+    # gets called => GPU-awareness with very low code footprint
+    if params.gpu_aware
+        buf_array = device_array
+        buf_type = array_type(device_data)
+    else
+        buf_array = host_array
+        buf_type = array_type(host_data)
+    end
+
+    # In case we don't use MPI: since there is no neighbours, no array is allocated.
+    comm_buffers = Dict{Side, NamedTuple{(:send, :recv), NTuple{2, MPI.Buffer{buf_type}}}}()
     requests = Dict{Side, NamedTuple{(:send, :recv), NTuple{2, MPI.AbstractRequest}}}()
     for side in instances(Side)
         has_neighbour(params, side) || continue
         neighbour = neighbour_at(params, side)
         comm_buffers[side] = (
-            send = MPI.Buffer(host_array(undef, params.comm_array_size)),
-            recv = MPI.Buffer(host_array(undef, params.comm_array_size))
+            send = MPI.Buffer(buf_array(undef, params.comm_array_size)),
+            recv = MPI.Buffer(buf_array(undef, params.comm_array_size))
         )
         requests[side] = (
             send = MPI.Send_init(comm_buffers[side].send, params.cart_comm; dest=neighbour),
@@ -129,7 +139,7 @@ function ArmonDualData(params::ArmonParameters{T}) where T
         )
     end
 
-    return ArmonDualData{array_type(device_data), array_type(host_data), typeof(params.device)}(
+    return ArmonDualData{array_type(device_data), array_type(host_data), buf_type, typeof(params.device)}(
         params.device, device_data, host_data, comm_buffers, requests
     )
 end
@@ -157,13 +167,24 @@ iter_recv_requests(data::ArmonDualData) =
     Iterators.map(p -> first(p) => last(last(p)), 
         Iterators.filter(!MPI.isnull ∘ last ∘ last, data.requests))
 
+"""
+    buffers_on_device(data::ArmonDualData)
+
+`true` if the MPI buffers are on the device, i.e. no copy from device to host is needed.
+This is the case when working on the CPU only or when using GPU-aware MPI.
+"""
+buffers_on_device(::ArmonDualData{D, H, B}) where {D, H, B} = D == B
+
 send_buffer(data::ArmonDualData, side::Side) = data.comm_buffers[side].send
 recv_buffer(data::ArmonDualData, side::Side) = data.comm_buffers[side].recv
 
-get_send_comm_array(data::ArmonDualData{H, H}, side::Side) where H = send_buffer(data, side).data
-get_recv_comm_array(data::ArmonDualData{H, H}, side::Side) where H = recv_buffer(data, side).data
+# MPI buffers are on the device (or everything is on the host) => no copy needed
+get_send_comm_array(data::ArmonDualData{D, H, D}, side::Side) where {D, H} = send_buffer(data, side).data
+get_recv_comm_array(data::ArmonDualData{D, H, D}, side::Side) where {D, H} = recv_buffer(data, side).data
 
-function get_send_comm_array(data::ArmonDualData{D, H}, side::Side) where {D, H}
+function get_send_comm_array(data::ArmonDualData{D, H, B}, side::Side) where {D, H, B}
+    D == B && return  # The buffer is on the device
+    # Generic case: device to host copies may be needed
     if side == Left
         comm_array = device(data).work_array_1
     elseif side == Right
@@ -177,7 +198,7 @@ function get_send_comm_array(data::ArmonDualData{D, H}, side::Side) where {D, H}
     return view(comm_array, array_range)
 end
 
-get_recv_comm_array(data::ArmonDualData{D, H}, side::Side) where {D, H} = get_send_comm_array(data, side)
+get_recv_comm_array(data::ArmonDualData{D, H, B}, side::Side) where {D, H, B} = get_send_comm_array(data, side)
 
 
 """
@@ -210,32 +231,35 @@ function host_to_device!(data::ArmonDualData{D, H}) where {D, H}
 end
 
 
-# In homogenous configurations, the data is already in the send buffer because of `get_send_comm_array` and `get_recv_comm_array`
-copy_to_send_buffer!(::ArmonDualData{H, H},   ::H, ::Side) where H = nothing
-copy_to_send_buffer!(::ArmonDualData{H, H},   ::H, ::H)    where H = nothing
-copy_from_recv_buffer!(::ArmonDualData{H, H}, ::H, ::Side) where H = nothing
-copy_from_recv_buffer!(::ArmonDualData{H, H}, ::H, ::H)    where H = nothing
+# The device data is already in the send/recv buffer (see `get_send_comm_array` and `get_recv_comm_array`)
+# For CPU, `D == H`
+copy_to_send_buffer!(::ArmonDualData{D, H, D}, ::D, ::Side)   where {D, H} = nothing
+copy_to_send_buffer!(::ArmonDualData{D, H, D}, ::D, ::D)      where {D <: AbstractArray, H} = nothing
+copy_from_recv_buffer!(::ArmonDualData{D, H, D}, ::D, ::Side) where {D, H} = nothing
+copy_from_recv_buffer!(::ArmonDualData{D, H, D}, ::D, ::D)    where {D <: AbstractArray, H} = nothing
 
 
-function copy_to_send_buffer!(data::ArmonDualData{D, H}, array::D, side::Side) where {D, H}
+function copy_to_send_buffer!(data::ArmonDualData{D, H, B}, array::D, side::Side) where {D, H, B}
     buffer_data = send_buffer(data, side).data
     copy_to_send_buffer!(data, array, buffer_data)
 end
 
 
-function copy_to_send_buffer!(data::ArmonDualData{D, H}, array::D, buffer::H) where {D, H}
+function copy_to_send_buffer!(data::ArmonDualData{D, H, B}, array::D, buffer::B) where {D, H, B <: AbstractArray}
+    D == B && return  # Buffers are already on the device
     array_data = view(array, 1:length(buffer))
     KernelAbstractions.copyto!(device_type(data), buffer, array_data)
 end
 
 
-function copy_from_recv_buffer!(data::ArmonDualData{D, H}, array::D, side::Side) where {D, H}
+function copy_from_recv_buffer!(data::ArmonDualData{D, H, B}, array::D, side::Side) where {D, H, B}
     buffer_data = recv_buffer(data, side).data
     copy_from_recv_buffer!(data, array, buffer_data)
 end
 
 
-function copy_from_recv_buffer!(data::ArmonDualData{D, H}, array::D, buffer::H) where {D, H}
+function copy_from_recv_buffer!(data::ArmonDualData{D, H, B}, array::D, buffer::B) where {D, H, B <: AbstractArray}
+    D == B && return  # Buffers are already on the device
     array_data = view(array, 1:length(buffer))
     KernelAbstractions.copyto!(device_type(data), array_data, buffer)
 end
