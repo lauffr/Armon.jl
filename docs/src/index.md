@@ -40,6 +40,7 @@ device_to_host!
 host_to_device!
 iter_recv_requests
 iter_send_requests
+buffers_on_device
 ```
 
 ## Device and backends
