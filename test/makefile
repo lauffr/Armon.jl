@@ -1,5 +1,5 @@
 
-PROJECT_DIR = .
+PROJECT_DIR = ..
 TEST_DIR = .
 PERF_REF_DIR = $(TEST_DIR)/performance_data
 DATA_REF_DIR = $(TEST_DIR)/reference_data

@@ -28,7 +28,7 @@ if isinteractive()
     menu = """
     Tests available:
      - all            All tests below
-     - short          Equivalent to 'code, stability, domains, convergence, conservation, kernels'
+     - short          Equivalent to 'quality, stability, domains, convergence, conservation, kernels'
      - quality        Code quality
      - stability      Type stability
      - domains        Domain 2D indexing
@@ -109,7 +109,6 @@ function do_tests(tests_to_do)
         end
     end
 
-    # TODO: in Julia 1.8, there is one more option: 'showtimings' which display the time for each test
     if is_root && isinteractive()
         Test.print_test_results(ts)
     end

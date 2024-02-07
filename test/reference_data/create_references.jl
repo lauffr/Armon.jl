@@ -6,7 +6,7 @@ include(joinpath(@__DIR__, "reference_functions.jl"))
 
 
 function create_reference_for(test, type)
-    ref_params = get_reference_params(test, type; use_threading=true, use_simd=true)
+    ref_params = get_reference_params(test, type; use_threading=false, use_simd=false)
     dt, cycles, data = run_armon_reference(ref_params)
     ref_file_name = get_reference_data_file_name(ref_params.test, type)
     open(ref_file_name, "w") do ref_file
