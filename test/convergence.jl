@@ -10,11 +10,17 @@ function cmp_cpu_with_reference(test::Symbol, type::Type; options...)
     T = data_type(ref_params)
     ref_data = ArmonData(ref_params)
 
-    differences_count, max_diff = compare_with_reference_data(ref_params, dt, cycles, host(data), ref_data)
+    differences_count, max_diff = compare_with_reference_data(
+        ref_params, dt, cycles,
+        host(data), ref_data,
+        save_diff=WRITE_FAILED
+    )
 
     if differences_count > 0 && WRITE_FAILED
         file_name = "test_$(test_name(ref_params.test))_$(T)"
-        write_sub_domain_file(ref_params, data, file_name; no_msg=true)
+        open(file_name, "w") do file
+            write_reference_data(ref_params, file, data, dt, cycles; more_vars=(:work_array_1,))
+        end
     end
 
     @test differences_count == 0
