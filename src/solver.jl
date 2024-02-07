@@ -1,4 +1,13 @@
 
+"""
+    SolverStats
+
+Solver output.
+
+`data` is nothing if `parameters.return_data` is `false`.
+
+`timer` is nothing if `parameters.measure_time` is `false`.
+"""
 struct SolverStats
     final_time::Float64
     last_dt::Float64
@@ -195,10 +204,12 @@ function time_loop(params::ArmonParameters, data::ArmonDualData)
     return params.next_cycle_dt, params.cycle, 1 / grind_time
 end
 
-#
-# Main function
-#
 
+"""
+    armon(::ArmonParameters)
+
+Main entry point of the solver. Returns a [`SolverStats`](@ref).
+"""
 function armon(params::ArmonParameters{T}) where T
     (; silent, is_root, timer) = params
 

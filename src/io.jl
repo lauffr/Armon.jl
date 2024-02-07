@@ -1,9 +1,9 @@
 
 function write_data_to_file(params::ArmonParameters, data::ArmonDataOrDual,
-        col_range, row_range, file; direct_indexing=false, for_3D=true)
+        col_range, row_range, file; direct_indexing=false, for_3D=true, more_vars=())
     @indexing_vars(params)
 
-    vars_to_write = saved_variables(data isa ArmonDualData ? host(data) : data)
+    vars_to_write = saved_variables(data isa ArmonDualData ? host(data) : data; more_vars)
 
     p = params.output_precision
     format = Printf.Format(join(repeat(["%#$(p+7).$(p)e"], length(vars_to_write)), ", ") * "\n")
@@ -44,7 +44,8 @@ function build_file_path(params::ArmonParameters, file_name::String)
 end
 
 
-function write_sub_domain_file(params::ArmonParameters, data::ArmonDataOrDual, file_name::String; no_msg=false)
+function write_sub_domain_file(params::ArmonParameters, data::ArmonDataOrDual, file_name::String;
+        no_msg=false, options...)
     (; silent, nx, ny, is_root, nghost) = params
 
     output_file_path = build_file_path(params, file_name)
@@ -57,7 +58,7 @@ function write_sub_domain_file(params::ArmonParameters, data::ArmonDataOrDual, f
             row_range = inflate(row_range, nghost)
         end
 
-        write_data_to_file(params, data, col_range, row_range, file)
+        write_data_to_file(params, data, col_range, row_range, file; options...)
     end
 
     if !no_msg && is_root && silent < 2
@@ -127,10 +128,10 @@ end
 
 
 function read_data_from_file(params::ArmonParameters{T}, data::ArmonDataOrDual,
-        col_range, row_range, file; direct_indexing=false) where T
+        col_range, row_range, file; direct_indexing=false, more_vars=()) where T
     @indexing_vars(params)
 
-    vars_to_read = saved_variables(data isa ArmonDualData ? host(data) : data)
+    vars_to_read = saved_variables(data isa ArmonDualData ? host(data) : data; more_vars)
 
     for j in col_range
         for i in row_range

@@ -60,10 +60,10 @@ array_type(::ArmonData{V}) where V = V
 
 
 main_variables() = (:x, :y, :rho, :umat, :vmat, :Emat, :pmat, :cmat, :gmat, :ustar, :pstar, :domain_mask)
-main_variables(data::ArmonData) = getfield.(data, main_variables())
+main_variables(data::ArmonData; more_vars=()) = map(f -> getfield(data, f), Iterators.flatten((main_variables(), more_vars)))
 
 saved_variables() = (:x, :y, :rho, :umat, :vmat, :pmat)
-saved_variables(data::ArmonData) = map(f -> getfield(data, f), saved_variables())
+saved_variables(data::ArmonData; more_vars=()) = map(f -> getfield(data, f), Iterators.flatten((saved_variables(), more_vars)))
 
 
 """

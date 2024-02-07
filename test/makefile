@@ -1,5 +1,5 @@
 
-PROJECT_DIR = .
+PROJECT_DIR = ..
 TEST_DIR = .
 PERF_REF_DIR = $(TEST_DIR)/performance_data
 DATA_REF_DIR = $(TEST_DIR)/reference_data
@@ -14,7 +14,7 @@ JULIA_THREADS ?= $(MPI_CORES)
 JULIA ?= julia
 JULIA_ARGS ?= -O3 --check-bounds=no --project=$(PROJECT_DIR) -t $(JULIA_THREADS)
 
-main_test_file = $(TEST_DIR)/main.jl
+main_test_file = $(TEST_DIR)/runtests.jl
 create_perf_ref_file = $(PERF_REF_DIR)/create_performance_reference.jl
 create_data_ref_file = $(DATA_REF_DIR)/create_references.jl
 

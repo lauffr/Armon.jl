@@ -36,19 +36,19 @@ end
 
 
 function write_reference_data(ref_params::ArmonParameters{T}, ref_file::IO, ref_data::ArmonDualData, 
-        dt::T, cycles::Int) where T
+        dt::T, cycles::Int; options...) where T
     (; nx, ny) = ref_params
 
     @printf(ref_file, "%#.15g, %d\n", dt, cycles)
 
     col_range = 1:ny
     row_range = 1:nx
-    write_data_to_file(ref_params, ref_data, col_range, row_range, ref_file)
+    write_data_to_file(ref_params, ref_data, col_range, row_range, ref_file; options...)
 end
 
 
 function read_reference_data(ref_params::ArmonParameters{T}, ref_file::IO, 
-        ref_data::ArmonData{V}) where {T, V <: AbstractArray{T}}
+        ref_data::ArmonData{V}; options...) where {T, V <: AbstractArray{T}}
     (; nx, ny) = ref_params
     @indexing_vars(ref_params)
 
@@ -57,7 +57,7 @@ function read_reference_data(ref_params::ArmonParameters{T}, ref_file::IO,
 
     col_range = 1:ny
     row_range = 1:nx
-    read_data_from_file(ref_params, ref_data, col_range, row_range, ref_file)
+    read_data_from_file(ref_params, ref_data, col_range, row_range, ref_file; options...)
 
     return ref_dt, ref_cycles
 end
@@ -80,9 +80,13 @@ no_zero(x::Flt) where (Flt <: AbstractFloat) = ifelse(iszero(x), nextfloat(zero(
 
 function count_differences(ref_params::ArmonParameters{T}, 
         data::ArmonData, ref_data::ArmonData;
-        atol=abs_tol(T, ref_params.test), rtol=rel_tol(T, ref_params.test)) where {T}
+        atol=abs_tol(T, ref_params.test), rtol=rel_tol(T, ref_params.test),
+        save_diff=false) where {T}
     (; nx, ny) = ref_params
     @indexing_vars(ref_params)
+
+    diff_var = data.work_array_1
+    save_diff && (diff_var .= 0)
 
     differences_count = 0
     max_diff = zero(T)
@@ -94,6 +98,9 @@ function count_differences(ref_params::ArmonParameters{T},
             diff_count = sum(.~ isapprox.(ref_row, cur_row; atol, rtol))
             differences_count += diff_count
             if diff_count > 0
+                if save_diff
+                    diff_var[row_range] .= .~ isapprox.(ref_row, cur_row; atol, rtol)
+                end
                 row_max_diff = maximum(
                     abs.((ref_row .- cur_row) ./ no_zero.(ref_row)) .*
                     (.~ isapprox.(ref_row, cur_row; atol, rtol))
@@ -109,7 +116,7 @@ end
 
 
 function compare_with_reference_data(ref_params::ArmonParameters{T}, dt::T, cycles::Int, 
-        data::ArmonData, ref_data::ArmonData) where {T}
+        data::ArmonData, ref_data::ArmonData; options...) where {T}
     ref_file_name = get_reference_data_file_name(ref_params.test, T)
 
     atol = abs_tol(T, ref_params.test)
@@ -121,5 +128,5 @@ function compare_with_reference_data(ref_params::ArmonParameters{T}, dt::T, cycl
         @test ref_cycles == cycles
     end
 
-    return count_differences(ref_params, data, ref_data; atol, rtol)
+    return count_differences(ref_params, data, ref_data; atol, rtol, options...)
 end
