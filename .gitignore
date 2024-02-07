@@ -4,3 +4,4 @@
 /.kokkos-build
 Manifest.toml
 LocalPreferences.toml
+.vscode
