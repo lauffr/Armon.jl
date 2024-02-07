@@ -12,7 +12,7 @@ end
 function run_armon_cpp_reference(ref_params::ArmonParameters)
     data = ArmonDualData(ref_params)
     init_test(ref_params, data)
-    dt, cycles, _ = time_loop(ref_params, data)
+    dt, cycles, _, _ = time_loop(ref_params, data)
     device_to_host!(data)
     return dt, cycles, data
 end

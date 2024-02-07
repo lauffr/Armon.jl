@@ -87,7 +87,7 @@ function uninit_vars_propagation(test, type; options...)
         work_array_4[i] = big_val
     end
 
-    dt, cycles, _ = time_loop(ref_params, data)
+    dt, cycles, _, _ = time_loop(ref_params, data)
 
     ref_data = ArmonData(ref_params)
 
