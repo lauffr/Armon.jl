@@ -2,7 +2,7 @@
 using Printf
 using Dates
 using Armon
-import .Armon: ArmonDualData, DomainRange
+import .Armon: DomainRange
 
 const TEST_CPU    = parse(Bool, get(ENV, "TEST_CPU", "true"))
 const TEST_CUDA   = parse(Bool, get(ENV, "TEST_CUDA", "false"))
@@ -50,7 +50,7 @@ const ranges = Dict(
     :first_order_remap  => (p) -> p.steps_ranges.advection,
     :second_order_remap => (p) -> p.steps_ranges.advection,
     :projection         => (p) -> p.steps_ranges.projection,
-    :dtCFL              => (p) -> p.ideb:p.ifin
+    :dtCFL              => (p) -> p.steps_ranges.real_domain
 )
 
 
@@ -63,7 +63,7 @@ const kernels = [
     :advection_first_order  => (p, d, r) -> Armon.advection_first_order!(p, d, r, p.cycle_dt, d.work_array_1, d.work_array_2, d.work_array_3, d.work_array_4),
     :advection_second_order => (p, d, r) -> Armon.advection_second_order!(p, d, r, p.cycle_dt, d.work_array_1, d.work_array_2, d.work_array_3, d.work_array_4),
     :projection             => (p, d, r) -> Armon.euler_projection!(p, d, r, p.cycle_dt, d.work_array_1, d.work_array_2, d.work_array_3, d.work_array_4),
-    :dtCFL                  => (p, d, _) -> Armon.local_time_step(p, d, p.cycle_dt),
+    :dtCFL                  => (p, d, _) -> Armon.local_time_step(p, d),
     # Armon.init_test
     # Armon.boundary_conditions!
     # Armon.boundary_conditions!
@@ -72,7 +72,7 @@ const kernels = [
 ]
 
 
-function measure_perf(params::ArmonParameters, data::ArmonDualData, kernel, range; repeats=10)
+function measure_perf(params::ArmonParameters, data::BlockGrid, kernel, range; repeats=10)
     device_data = Armon.device(data)
     time = @elapsed begin
         for _ in 1:repeats
@@ -81,12 +81,12 @@ function measure_perf(params::ArmonParameters, data::ArmonDualData, kernel, rang
         wait(params)
     end
     mean_time = time / repeats
-    mean_perf = params.nbcell / mean_time
+    mean_perf = params.nx * params.ny / mean_time
     return (; mean_time, mean_perf)
 end
 
 
-function measure_all_kernels(params::ArmonParameters, data::ArmonDualData; kwargs...)
+function measure_all_kernels(params::ArmonParameters, data::BlockGrid; kwargs...)
     res = Dict()
     for (name, kernel_λ) in kernels
         range = ranges[name](params)
@@ -98,7 +98,7 @@ end
 
 function check_memory(params::ArmonParameters)
     mem_info = Armon.memory_info(params)
-    mem_req  = Armon.memory_required(params)
+    mem_req, _ = Armon.memory_required(params)
     (mem_req * 1.05 > mem_info.total) && return false
     if mem_req * 1.05 < mem_info.free
         GC.gc(true)
@@ -127,7 +127,7 @@ function setup_data(params::ArmonParameters)
         return nothing
     end
 
-    data = ArmonDualData(params)
+    data = BlockGrid(params)
     Armon.init_test(params, data)
     Armon.time_step(params, data)
     wait(params)

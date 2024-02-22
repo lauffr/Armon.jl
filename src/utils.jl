@@ -1,10 +1,15 @@
 
+const ObjOrType = Union{T, Type{<:T}} where T
+
+
 """
     Axis
 
 Enumeration of the axes of the domain
 """
-@enum Axis X_axis Y_axis
+@enum Axis X_axis=1 Y_axis=2
+
+next_axis(axis::Axis) = Axis(mod1(Int(axis) + 1, length(instances(Axis))))
 
 
 """
@@ -12,19 +17,51 @@ Enumeration of the axes of the domain
 
 Enumeration of the sides of the domain
 """
-@enum Side Left Right Bottom Top
+@enum Side Left=1 Right=2 Bottom=3 Top=4
 
-sides_along(dir::Axis) = dir == X_axis ? (Left, Right) : (Bottom, Top)
+@inline sides_along(dir::Axis) = dir == X_axis ? (Left, Right) : (Bottom, Top)
 
-function offset_to(side::Side)
-    if side == Left
-        return (-1, 0)
-    elseif side == Right
-        return (1, 0)
-    elseif side == Bottom
-        return (0, -1)
-    elseif side == Top
-        return (0, 1)
+@inline first_side(dir::Axis) = dir == X_axis ? Left : Bottom
+@inline first_sides() = (Left, Bottom)
+
+@inline last_side(dir::Axis) = dir == X_axis ? Right : Top
+@inline last_sides() = (Right, Top)
+
+@inline function axis_of(side::Side)
+    # TODO: `Axis(((Integer(side) - 1) >> 1) + 1)` ??
+    if     side == Left   return X_axis
+    elseif side == Right  return X_axis
+    elseif side == Bottom return Y_axis
+    elseif side == Top    return Y_axis
+    else                  return X_axis  # Should not happen, here only for type-stability
+    end
+end
+
+@inline function opposite_of(side::Side)
+    if     side == Left   return Right
+    elseif side == Right  return Left
+    elseif side == Bottom return Top
+    elseif side == Top    return Bottom
+    else                  return Left  # Should not happen, here only for type-stability
+    end
+end
+
+@inline function offset_to(side::Side)
+    if     side == Left   return (-1,  0)
+    elseif side == Right  return ( 1,  0)
+    elseif side == Bottom return ( 0, -1)
+    elseif side == Top    return ( 0,  1)
+    else                  return ( 0,  0)  # Should not happen, here only for type-stability
+    end
+end
+
+
+@inline function side_from_offset(offset::Tuple)
+    if     offset[1] < 0 return Left
+    elseif offset[1] > 0 return Right
+    elseif offset[2] < 0 return Bottom
+    elseif offset[2] > 0 return Top
+    else                 return Left  # Should not happen, here only for type-stability (responsability of the caller)
     end
 end
 

@@ -2,8 +2,8 @@
 using TOML
 using ThreadPinning
 using KernelAbstractions
-import .Armon: ArmonDualData, memory_required, init_test, MinmodLimiter
-import .Armon: @indexing_vars, @i, DomainRange, update_steps_ranges, linear_range
+import .Armon: memory_required, init_test, MinmodLimiter
+import .Armon: DomainRange, update_steps_ranges, linear_range
 
 
 include(joinpath(@__DIR__, "device_info.jl"))
@@ -24,10 +24,11 @@ const KERNELS = [
     ("perfect_gas_EOS!",           false, (p, d, r, _ ) -> Armon.perfect_gas_EOS!(          p, d, "label", r, 7/5;                        )),
     ("bizarrium_EOS!",             false, (p, d, r, _ ) -> Armon.bizarrium_EOS!(            p, d, "label", r;                             )),
     ("cell_update!",               false, (p, d, r, dt) -> Armon.cell_update!(              p, d, linear_range(r), dt, d.umat;            )),
-    ("cell_update_lagrange!",      false, (p, d, r, dt) -> Armon.cell_update_lagrange!(     p, d, linear_range(r), p.ifin, dt, d.x;       )),
+    ("cell_update_lagrange!",      false, (p, d, r, dt) -> Armon.cell_update_lagrange!(     p, d, linear_range(r), p.ifin, dt, d.x;       )),  # TODO: fixme
     ("euler_projection!",          false, (p, d, r, dt) -> Armon.euler_projection!(         p, d, r, dt, d.work_array_1, d.work_array_2, d.work_array_3, d.work_array_4)),
     ("advection_first_order!",     false, (p, d, r, dt) -> Armon.advection_first_order!(    p, d, r, dt, d.work_array_1, d.work_array_2, d.work_array_3, d.work_array_4)),
     ("advection_second_order!",    false, (p, d, r, dt) -> Armon.advection_second_order!(   p, d, r, dt, d.work_array_1, d.work_array_2, d.work_array_3, d.work_array_4)),
+    # TODO: fixme
     ("boundary_conditions! left",  true,  (p, d, _, _ ) -> Armon.boundary_conditions!(      p, d, 1:p.ny, p.row_length, p.index_start + p.idx_row #= @i(0,1) =#,            1, -1., 1.)),
     ("boundary_conditions! bottom",true,  (p, d, _, _ ) -> Armon.boundary_conditions!(      p, d, 1:p.nx,            1, p.index_start + p.idx_col #= @i(1,0) =#, p.row_length,  1., 1.)),
     ("read_border_array!",         true,  (p, d, r, _ ) -> Armon.read_border_array!(        p, d, r, p.nx, d.tmp_comm_array;              )),
@@ -122,7 +123,7 @@ end
 
 
 function has_enough_memory_for(params, memory_available)
-    memory_needed = memory_required(params)
+    memory_needed, _ = memory_required(params)
     not_enough_mem = memory_needed > memory_available
     if not_enough_mem
         mem_req_str = round(memory_needed / 1e9; digits=1)
@@ -144,7 +145,7 @@ function setup_kernel_tests(params, memory_available)
     not_enough_mem = has_enough_memory_for(params, memory_available)
     not_enough_mem && return true, nothing
 
-    data = ArmonDualData(params)
+    data = BlockGrid(params)
     init_test(params, data)
     device_to_host!(data)
 
@@ -152,13 +153,11 @@ function setup_kernel_tests(params, memory_available)
 end
 
 
-function measure_kernel_performance(params::ArmonParameters{T}, data::ArmonDualData, 
+function measure_kernel_performance(params::ArmonParameters{T}, data::BlockGrid, 
         kernel_lambda, single_row_kernel) where T
-    (; row_length, nghost, nx) = params
-    @indexing_vars(params)
-
     if single_row_kernel
         # Same as `read_border_array!` domain for the bottom side
+        # TODO: fixme
         main_range = @i(1, 1):row_length:@i(1, nghost)
         inner_range = 1:nx
         range = DomainRange((main_range, inner_range))

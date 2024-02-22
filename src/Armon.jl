@@ -13,8 +13,8 @@ if !isdefined(Base, :get_extension)
     using Requires
 end
 
-export ArmonParameters, ArmonDualData, SolverStats, armon, data_type, memory_required
-export device_to_host!, host_to_device!, host, device, saved_variables, main_variables
+export ArmonParameters, BlockGrid, SolverStats, armon, data_type, memory_required
+export device_to_host!, host_to_device!
 
 include("utils.jl")
 include("domain_ranges.jl")
@@ -22,6 +22,7 @@ include("limiters.jl")
 include("tests.jl")
 include("parameters.jl")
 include("data.jl")
+include("blocking/blocking.jl")
 include("profiling.jl")
 include("generic_kernel.jl")
 include("kernels.jl")

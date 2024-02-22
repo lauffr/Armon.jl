@@ -36,12 +36,6 @@ MPI config. The MPI domain will be a `px × py` process grid.
 
 ## Kernels
 
-    async_comms = false
-
-`async_comms` use asynchronous boundary conditions kernels, including asynchronous MPI communications.
-Only for GPU backends.
-
-
     use_threading = true, use_simd = true
 
 Switches for [`CPU_HP`](@ref) kernels.
@@ -59,9 +53,23 @@ Enables the use of `KernelAbstractions.jl` kernels.
 Use kernels for `Kokkos.jl`.
 
 
+    use_cache_blocking = true
+
+Separate the domain into semi-independant blocks, improving the cache-locality of memory accesses
+and therefore memory throughput.
+
+
     block_size = 1024
 
-GPU block size.
+Size of blocks for cache blocking. Can be a tuple. If `use_cache_blocking == false`, this option
+only controls the size of GPU blocks.
+
+
+    use_two_step_reduction = false
+
+Reduction kernels (`dtCFL_kernel` and `conservation_vars`) use some optimizations to perform the
+reduction in a single step. It might cause issues on some GPU backends: a more "gentle" approach
+could avoid those by doing it in two steps.
 
 
 ## Profiling
@@ -121,12 +129,6 @@ Number of ghost cells. Must be greater or equal to the minimum number of ghost c
 adds another one)
 
 
-    stencil_width = nothing
-
-Overrides the number of cells over which the boundary conditions are applied to.
-Defaults to the number of ghost cells.
-
-
     Dt = 0., cst_dt = false, dt_on_even_cycles = false
 
 `Dt` is the initial time step, it is computed after initialization by default.
@@ -138,6 +140,11 @@ even).
     ieee_bits = 64
 
 Main data type. `32` for `Float32`, `64` for `Float64`.
+
+
+    data_type = nothing
+
+Takes precedence over `ieee_bits` if different than `nothing`.
 
 
 ## Test case and domain
@@ -179,13 +186,13 @@ print anything.
 
     write_output = false, write_ghosts = false
 
-`write_output=true` will write all `saved_variables` to the output file.
+`write_output=true` will write all `saved_vars()` to the output file.
 If `write_ghosts=true`, ghost cells will also be included.
 
 
     write_slices = false
 
-Will write all `saved_variables` to 3 output files, one for the middle X row, another for the middle
+Will write all `saved_vars()` to 3 output files, one for the middle X row, another for the middle
 Y column, and another for the diagonal. If `write_ghosts=true`, ghost cells will also be included.
 
 
@@ -219,7 +226,7 @@ An error is thrown otherwise. Accepts a relative `comparison_tolerance`.
     return_data = false
 
 If `return_data=true`, then in the [`SolverStats`](@ref) returned by [`armon`](@ref), the `data`
-field will contain the [`ArmonDualData`](@ref) used by the solver.
+field will contain the [`BlockGrid`](@ref) used by the solver.
 """
 mutable struct ArmonParameters{Flt_T, Device, DeviceParams}
     # Test problem type, riemann solver and solver scheme
@@ -232,6 +239,7 @@ mutable struct ArmonParameters{Flt_T, Device, DeviceParams}
     nghost::Int
     nx::Int
     ny::Int
+    sub_domain_size::NTuple{2, Int}
     dx::Flt_T
     domain_size::NTuple{2, Flt_T}
     origin::NTuple{2, Flt_T}
@@ -241,19 +249,6 @@ mutable struct ArmonParameters{Flt_T, Device, DeviceParams}
     dt_on_even_cycles::Bool
     axis_splitting::Symbol
     projection::Symbol
-
-    # Indexing
-    row_length::Int
-    col_length::Int
-    nbcell::Int
-    ideb::Int
-    ifin::Int
-    index_start::Int
-    idx_row::Int
-    idx_col::Int
-    current_axis::Axis
-    s::Int  # Stride
-    stencil_width::Int
 
     # Bounds
     maxtime::Flt_T
@@ -265,6 +260,7 @@ mutable struct ArmonParameters{Flt_T, Device, DeviceParams}
     cycle_dt::Flt_T  # Time step used by kernels, scaled according to the axis splitting
     curr_cycle_dt::Flt_T  # Current unscaled time step
     next_cycle_dt::Flt_T  # Time step of the next cycle
+    current_axis::Axis
     steps_ranges::StepsRanges
 
     # Output
@@ -288,9 +284,11 @@ mutable struct ArmonParameters{Flt_T, Device, DeviceParams}
     use_simd::Bool
     use_gpu::Bool
     use_kokkos::Bool
+    use_cache_blocking::Bool
+    use_two_step_reduction::Bool
     device::Device  # A KernelAbstractions.Backend, Kokkos.ExecutionSpace or CPU_HP
     backend_options::DeviceParams
-    block_size::NTuple{3, Int}
+    block_size::NTuple{2, Int}
     tasks_storage::Dict{Symbol, Union{Nothing, IdDict}}
 
     # MPI
@@ -319,13 +317,18 @@ mutable struct ArmonParameters{Flt_T, Device, DeviceParams}
     initial_mass::Flt_T
     initial_energy::Flt_T
 
-    function ArmonParameters(; ieee_bits = 64, nx = 10, ny = 10, options...)
+    function ArmonParameters(; data_type = nothing, ieee_bits = 64, nx = 10, ny = 10, options...)
+        if data_type === nothing
         flt_type = (ieee_bits == 64) ? Float64 : Float32
+        else
+            flt_type = data_type
+        end
         device, options = get_device(; options...)
 
         params = new{flt_type, typeof(device), Any}()
         params.nx = nx
         params.ny = ny
+        params.sub_domain_size = (nx, ny)
         params.device = device
 
         # Each initialization step consumes the options it needs. At the end no option should remain.
@@ -443,26 +446,35 @@ function init_device(params::ArmonParameters;
     async_comms = false,
     use_threading = true, use_simd = true,
     use_gpu = false, use_kokkos = false,
-    block_size = 1024,
+    block_size = nothing, use_cache_blocking = true,
+    use_two_step_reduction = false,
     options...
 )
-    if async_comms && !use_gpu && !use_kokkos
-        @warn "Asynchronous communications only work when using a GPU, or with a multithreading \
-               backend which supports tasking." maxlog=1
+    if async_comms
+        solver_error(:config, "Asynchronous communications are implicit with blocking")
     end
 
-    if async_comms && use_kokkos
-        @warn "Asynchronous communications with Kokkos NYI" maxlog=1
-    end
-
-    params.async_comms = async_comms
     params.use_threading = use_threading
     params.use_simd = use_simd
     params.use_kokkos = use_kokkos
     params.use_gpu = use_gpu
+    params.use_cache_blocking = use_cache_blocking
+    params.use_two_step_reduction = use_two_step_reduction
 
-    length(block_size) > 3 && solver_error(:config, "Expected `block_size` to contain up to 3 elements, got: $block_size")
-    params.block_size = tuple(block_size..., ntuple(Returns(1), 3 - length(block_size))...)
+    if isnothing(block_size)
+        if use_cache_blocking
+            # Estimate the optimal block size, given the solver's stencils
+            # TODO
+            block_size = (64, 64)
+        else
+            # TODO: GPU block size ?? 1024? but how?
+            block_size = (32, 32)
+            block_size = (1024, 1)
+        end
+    end
+
+    length(block_size) > 2 && solver_error(:config, "Expected `block_size` to contain up to 2 elements, got: $block_size")
+    params.block_size = tuple(block_size..., ntuple(Returns(1), 2 - length(block_size))...)
 
     params.tasks_storage = Dict{Symbol, Union{Nothing, IdDict}}()
 
@@ -498,7 +510,7 @@ function init_scheme(params::ArmonParameters{T};
     scheme = :GAD, projection = :euler,
     riemann = :acoustic, riemann_limiter = :minmod,
     axis_splitting = :Sequential,
-    nghost = 2, stencil_width = nothing,
+    nghost = 2,
     cst_dt = false, Dt = 0., dt_on_even_cycles = false,
     options...
 ) where {T}
@@ -516,16 +528,6 @@ function init_scheme(params::ArmonParameters{T};
         solver_error(:config, "Lagrangian mode unsupported")
     end
 
-    if isnothing(stencil_width)
-        stencil_width = min_nghost
-    elseif stencil_width < min_nghost
-        @warn "The detected minimum stencil width is $min_nghost, but $stencil_width was given. \
-               The Boundary conditions might be false." maxlog=1
-    elseif stencil_width > nghost
-        solver_error(:config, "The stencil width given ($stencil_width) cannot be bigger than the \
-                               number of ghost cells ($nghost)")
-    end
-
     if riemann_limiter isa Symbol
         riemann_limiter = limiter_from_name(riemann_limiter)
     elseif !(riemann_limiter isa Limiter)
@@ -537,7 +539,6 @@ function init_scheme(params::ArmonParameters{T};
     end
 
     params.nghost = nghost
-    params.stencil_width = stencil_width
     params.scheme = scheme
     params.projection = projection
     params.riemann = riemann
@@ -605,29 +606,15 @@ function init_indexing(params::ArmonParameters; options...)
     (px, py) = params.proc_dims
     nx ÷= px
     ny ÷= py
-    row_length = params.nghost * 2 + nx
-    col_length = params.nghost * 2 + ny
 
     params.nx = nx
     params.ny = ny
-    params.row_length = row_length
-    params.col_length = col_length
     params.global_grid = (g_nx, g_ny)
-
-    # First and last index of the real domain of an array
-    params.ideb = row_length * params.nghost + params.nghost + 1
-    params.ifin = row_length * (ny - 1 + params.nghost) + params.nghost + nx
-    params.index_start = params.ideb - row_length - 1  # Used only by the `@i` macro
-
-    # Used only for indexing with the `@i` macro
-    params.idx_row = row_length
-    params.idx_col = 1
 
     params.dx = params.domain_size[1] / g_nx
 
     # Array allocation sizes
-    params.nbcell = row_length * col_length
-    params.comm_array_size = params.use_MPI ? max(nx, ny) * params.nghost * 7 : 0
+    params.comm_array_size = params.use_MPI ? max(nx, ny) * params.nghost * length(comm_variables()) : 0
 
     params.steps_ranges = StepsRanges()
 
@@ -643,10 +630,6 @@ function init_output(params::ArmonParameters{T};
     check_result = false, return_data = false,
     options...
 ) where {T}
-    if compare && params.async_comms
-        solver_error(:config, "Cannot compare when using asynchronous communications")
-    end
-
     if isnothing(output_precision)
         output_precision = T == Float64 ? 17 : 9  # Exact decimal output by default
     end
@@ -826,7 +809,7 @@ function print_parameters(io::IO, p::ArmonParameters; pad = 20)
 
     domain_str = p.use_MPI ? "sub-domain" : "domain"
     print_parameter(io, pad, domain_str, "$(p.nx)×$(p.ny) with $(p.nghost) ghosts", nl=false)
-    println(io, " (", @sprintf("%g", p.nx * p.ny), " real cells, ", @sprintf("%g", p.nbcell), " in total)")
+    println(io, " (", @sprintf("%g", p.nx * p.ny), " real cells)")
 
     if p.use_MPI
         print_parameter(io, pad, "coords", join(p.cart_coords, "×"), nl=false)
@@ -835,14 +818,14 @@ function print_parameters(io::IO, p::ArmonParameters; pad = 20)
         neighbours_str = join(neighbours_list, ", ", " and ") |> lowercase
         print(io, ", with $(neighbour_count(p)) neighbour", neighbour_count(p) != 1 ? "s" : "")
         println(io, neighbour_count(p) > 0 ? " on the " * neighbours_str : "")
-        print_parameter(io, pad, "async comms", p.async_comms)
         print_parameter(io, pad, "gpu aware", p.gpu_aware)
-    else
-        print_parameter(io, pad, "async code path", p.async_comms)
     end
 
     print_parameter(io, pad, "domain size", join(p.domain_size, " × "), nl=false)
     println(io, ", origin: (", join(p.origin, ", "), ")")
+
+    grid_size, static_sized_grid, _ = grid_dimensions(p)
+    print_grid_dimensions(io, grid_size, static_sized_grid, p.block_size, (p.nx, p.ny), p.nghost; pad)
 end
 
 
@@ -968,19 +951,9 @@ end
 
 
 function update_axis_parameters(params::ArmonParameters{T}, axis::Axis) where T
-    (; row_length, global_grid, domain_size) = params
-    (g_nx, g_ny) = global_grid
-    (sx, sy) = domain_size
-
+    i_ax = Int(axis)
     params.current_axis = axis
-
-    if axis == X_axis
-        params.s = 1
-        params.dx = sx / g_nx
-    else  # axis == Y_axis
-        params.s = row_length
-        params.dx = sy / g_ny
-    end
+    params.dx = params.domain_size[i_ax] / params.global_grid[i_ax]
 end
 
 #
@@ -988,10 +961,7 @@ end
 #
 
 function update_steps_ranges(params::ArmonParameters)
-    (; nx, ny, nghost, row_length, current_axis) = params
-    @indexing_vars(params)
-
-    ax = current_axis
+    nghost = params.nghost
     steps = params.steps_ranges
 
     # Extra cells to compute in each step
@@ -1008,132 +978,32 @@ function update_steps_ranges(params::ArmonParameters)
     end
 
     # Real domain
-    col_range = @i(1,1):row_length:@i(1,ny)
-    row_range = 1:nx
-    real_range = DomainRange(col_range, row_range)
+    bl_corner = (0, 0)  # Bottom-Left corner offset
+    tr_corner = (0, 0)  # Top-Right   corner offset
+    real_range = (bl_corner, tr_corner)
     steps.real_domain = real_range
 
     # Full domain (real + ghosts), for initialization + first-touch
-    full_range = inflate_dir(real_range, X_axis, params.nghost)
-    full_range = inflate_dir(full_range, Y_axis, params.nghost)
-    steps.full_domain = full_range
+    steps.full_domain = (bl_corner .- nghost, bl_corner .+ nghost)
 
     # Steps ranges, computed so that there is no need for an extra BC step before the projection
     steps.EOS = real_range  # The BC overwrites any changes to the ghost cells right after
-    steps.fluxes = inflate_dir(real_range, ax, extra_FLX)
-    steps.cell_update = inflate_dir(real_range, ax, extra_UP)
-    steps.advection = expand_dir(real_range, ax, 1)
-    steps.projection = real_range
 
+    if params.current_axis == X_axis
     # Fluxes are computed between 'i-s' and 'i', we need one more cell on the right to have all fluxes
-    steps.fluxes = expand_dir(steps.fluxes, ax, 1)
-
-    # Inner ranges: real domain without sides
-    steps.inner_EOS = inflate_dir(steps.EOS, ax, -nghost)
-    steps.inner_fluxes = steps.inner_EOS
-
-    rt_offset = direction_length(steps.inner_EOS, ax)
-
-    # Outer ranges: sides of the real domain
-    if ax == X_axis
-        steps.outer_lb_EOS = DomainRange(col_range, row_range[1:min(nx, nghost)])
+        fluxes_bl  = (extra_FLX, 0); fluxes_tr  = (extra_FLX+1, 0)
+        cell_up_bl = (extra_UP,  0); cell_up_tr = (extra_UP,    0)
+        advec_bl   = (0,         0); advec_tr   = (1,           0)
     else
-        steps.outer_lb_EOS = DomainRange(col_range[1:min(ny, nghost)], row_range)
+        fluxes_bl  = (0, extra_FLX); fluxes_tr  = (0, extra_FLX+1)
+        cell_up_bl = (0, extra_UP ); cell_up_tr = (0, extra_UP   )
+        advec_bl   = (0, 0        ); advec_tr   = (0, 1          )
     end
 
-    steps.outer_rt_EOS = shift_dir(steps.outer_lb_EOS, ax, nghost + rt_offset)
-
-    if rt_offset == 0
-        # Correction when the side regions overlap
-        overlap_width = direction_length(real_range, ax) - 2*nghost
-        steps.outer_rt_EOS = expand_dir(steps.outer_rt_EOS, ax, overlap_width)
-    end
-
-    steps.outer_lb_fluxes = prepend_dir(steps.outer_lb_EOS, ax, extra_FLX)
-    steps.outer_rt_fluxes = expand_dir(steps.outer_rt_EOS, ax, extra_FLX + 1)
-end
-
-
-function boundary_conditions_indexes(params::ArmonParameters, side::Side)
-    (; row_length, nx, ny) = params
-    @indexing_vars(params)
-
-    stride::Int = 1
-    d::Int = 1
-
-    if side == Left
-        stride = row_length
-        i_start = @i(0,1)
-        loop_range = 1:ny
-        d = 1
-    elseif side == Right
-        stride = row_length
-        i_start = @i(nx+1,1)
-        loop_range = 1:ny
-        d = -1
-    elseif side == Top
-        stride = 1
-        i_start = @i(1,ny+1)
-        loop_range = 1:nx
-        d = -row_length
-    elseif side == Bottom
-        stride = 1
-        i_start = @i(1,0)
-        loop_range = 1:nx
-        d = row_length
-    else
-        solver_error(:config, "Unknown side: $side")
-    end
-
-    return i_start, loop_range, stride, d
-end
-
-
-function border_domain(params::ArmonParameters, side::Side)
-    (; nghost, nx, ny, row_length) = params
-    @indexing_vars(params)
-
-    if side == Left
-        main_range = @i(1, 1):row_length:@i(1, ny)
-        inner_range = 1:nghost
-        side_length = ny
-    elseif side == Right
-        main_range = @i(nx-nghost+1, 1):row_length:@i(nx-nghost+1, ny)
-        inner_range = 1:nghost
-        side_length = ny
-    elseif side == Top
-        main_range = @i(1, ny-nghost+1):row_length:@i(1, ny)
-        inner_range = 1:nx
-        side_length = nx
-    elseif side == Bottom
-        main_range = @i(1, 1):row_length:@i(1, nghost)
-        inner_range = 1:nx
-        side_length = nx
-    end
-
-    return DomainRange(main_range, inner_range)
-end
-
-
-function ghost_domain(params::ArmonParameters, side::Side)
-    (; nghost, nx, ny, row_length) = params
-    @indexing_vars(params)
-
-    if side == Left
-        main_range = @i(1-nghost, 1):row_length:@i(1-nghost, ny)
-        inner_range = 1:nghost
-    elseif side == Right
-        main_range = @i(nx+1, 1):row_length:@i(nx+1, ny)
-        inner_range = 1:nghost
-    elseif side == Top
-        main_range = @i(1, ny+1):row_length:@i(1, ny+nghost)
-        inner_range = 1:nx
-    elseif side == Bottom
-        main_range = @i(1, 1-nghost):row_length:@i(1, 0)
-        inner_range = 1:nx
-    end
-
-    return DomainRange(main_range, inner_range)
+    steps.fluxes      = (bl_corner .- fluxes_bl,  tr_corner .+ fluxes_tr )
+    steps.cell_update = (bl_corner .- cell_up_bl, tr_corner .+ cell_up_tr)
+    steps.advection   = (bl_corner .- advec_bl,   tr_corner .+ advec_tr  )
+    steps.projection  = real_range
 end
 
 

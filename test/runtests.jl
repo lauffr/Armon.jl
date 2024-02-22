@@ -28,11 +28,11 @@ if isinteractive()
     menu = """
     Tests available:
      - all            All tests below
-     - short          Equivalent to 'quality, stability, domains, convergence, conservation, kernels'
+     - short          Equivalent to 'quality, stability, convergence, conservation'
      - quality        Code quality
      - stability      Type stability
      - domains        Domain 2D indexing
-     - kernels        Compilation and correctness of indexing in generic kernels (CPU & GPU)
+     - blocking       Blocking tests
      - convergence    Convergence to the reference solutions
      - conservation   Check that the energy and mass for each are kept constant throughout a lot of cycles.
      - GPU            Equivalence of the GPU backends (CUDA & ROCm) with the CPU
@@ -58,10 +58,10 @@ filter!(!isempty, main_options)
 main_options = main_options .|> Symbol |> union
 
 if :all in main_options
-    expanded_options = [:quality, :stability, :domains, :convergence, :conservation, :kernels,
+    expanded_options = [:quality, :stability, :domains, :blocking, :convergence, :conservation,
                         :kokkos, :gpu, :performance, :async, :mpi]
 elseif :short in main_options
-    expanded_options = [:quality, :stability, :domains, :convergence, :conservation, :kernels]
+    expanded_options = [:quality, :stability, :convergence, :conservation]
 else
     expanded_options = []
 end
@@ -92,6 +92,7 @@ function do_tests(tests_to_do)
             elseif test === :quality        run_file("code_quality.jl")
             elseif test === :stability      run_file("type_stability.jl")
             elseif test === :domains        run_file("domains.jl")
+            elseif test === :blocking       run_file("blocking.jl")
             elseif test === :convergence    run_file("convergence.jl")
             elseif test === :conservation   run_file("conservation.jl")
             elseif test === :kernels        run_file("kernels.jl")

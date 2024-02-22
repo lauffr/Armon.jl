@@ -1,189 +1,255 @@
 
 @generic_kernel function boundary_conditions!(
-    stencil_width::Int, stride::Int, i_start::Int, d::Int, u_factor::T, v_factor::T,
-    rho::V, umat::V, vmat::V, pmat::V, cmat::V, gmat::V, Emat::V
+    ρ::V, u::V, v::V, p::V, c::V, g::V, E::V,
+    bsize::BlockSize, axis::Axis, side::Side,
+    u_factor::T, v_factor::T
 ) where {T, V <: AbstractArray{T}}
-    idx = @index_1D_lin()
-    i  = idx * stride + i_start
-    i₊ = i + d
+    @kernel_init begin
+        # `incr` is the stride of `axis` going towards the edge along `side`
+        incr = stride_along(bsize, axis)
+        incr = ifelse(side in first_sides(), -incr, incr)
+    end
 
-    for _ in 1:stencil_width
-        rho[i]  = rho[i₊]
-        umat[i] = umat[i₊] * u_factor
-        vmat[i] = vmat[i₊] * v_factor
-        pmat[i] = pmat[i₊]
-        cmat[i] = cmat[i₊]
-        gmat[i] = gmat[i₊]
-        Emat[i] = Emat[i₊]
+    i = @index_2D_lin()
+    ig = i + incr  # index of the ghost cell
 
-        i  -= d
-        i₊ += d
+    # TODO: use `comm_vars()` and iterate it like `pack_to_array` ?
+    for _ in 1:ghosts(bsize)
+        ρ[ig] = ρ[i]
+        u[ig] = u[i] * u_factor
+        v[ig] = v[i] * v_factor
+        p[ig] = p[i]
+        c[ig] = c[i]
+        g[ig] = g[i]
+        E[ig] = E[i]
+
+        i  -= incr
+        ig += incr
     end
 end
 
 
-function boundary_conditions!(params::ArmonParameters{T}, data::ArmonDualData, side::Side) where T
+function boundary_conditions!(params::ArmonParameters{T}, blk::LocalTaskBlock, side::Side) where {T}
     (u_factor::T, v_factor::T) = boundary_condition(params.test, side)
-    (i_start, loop_range, stride, d) = boundary_conditions_indexes(params, side)
-
-    i_start -= stride  # Adjust for the fact that `@index_1D_lin()` is 1-indexed
-
-    boundary_conditions!(params, device(data), loop_range, stride, i_start, d, u_factor, v_factor)
+    domain = border_domain(blk.size, side)
+    boundary_conditions!(params, blk, domain, blk.size, params.current_axis, side, u_factor, v_factor)
 end
 
 
-@generic_kernel function read_border_array!(
-    side_length::Int, nghost::Int,
-    rho::V, umat::V, vmat::V, pmat::V, cmat::V, gmat::V, Emat::V, value_array::V
-) where V
-    idx = @index_2D_lin()
-    itr = @iter_idx()
+@kernel_function function vars_ghost_exchange(
+    vars₁::NTuple{N, V}, i₁, ig₁, sg₁,
+    vars₂::NTuple{N, V}, i₂, ig₂, sg₂,
+    ghosts
+) where {N, V}
+    for gᵢ in 0:ghosts-1
+        j₁ = gᵢ * sg₁
+        j₂ = gᵢ * sg₂
 
-    (i, i_g) = divrem(itr - 1, nghost)
-    i_arr = (i_g * side_length + i) * 7
+        # Real cells of 1 to ghosts of 2
+        # TODO: KernelAbstractions.Extras.@unroll ??
+        for v in 1:N
+            vars₂[v][ig₂ + j₂] = vars₁[v][i₁ + j₁]
+        end
 
-    value_array[i_arr+1] =  rho[idx]
-    value_array[i_arr+2] = umat[idx]
-    value_array[i_arr+3] = vmat[idx]
-    value_array[i_arr+4] = pmat[idx]
-    value_array[i_arr+5] = cmat[idx]
-    value_array[i_arr+6] = gmat[idx]
-    value_array[i_arr+7] = Emat[idx]
-end
-
-
-@generic_kernel function write_border_array!(
-    side_length::Int, nghost::Int,
-    rho::V, umat::V, vmat::V, pmat::V, cmat::V, gmat::V, Emat::V, value_array::V
-) where V
-    idx = @index_2D_lin()
-    itr = @iter_idx()
-
-    (i, i_g) = divrem(itr - 1, nghost)
-    i_arr = (i_g * side_length + i) * 7
-
-     rho[idx] = value_array[i_arr+1]
-    umat[idx] = value_array[i_arr+2]
-    vmat[idx] = value_array[i_arr+3]
-    pmat[idx] = value_array[i_arr+4]
-    cmat[idx] = value_array[i_arr+5]
-    gmat[idx] = value_array[i_arr+6]
-    Emat[idx] = value_array[i_arr+7]
-end
-
-
-function read_border_array!(params::ArmonParameters, data::ArmonDualData, comm_array, side::Side)
-    (; nx, ny) = params
-
-    range = border_domain(params, side)
-    side_length = (side == Left || side == Right) ? ny : nx
-
-    return read_border_array!(params, device(data), range, side_length, comm_array)
-end
-
-
-function write_border_array!(params::ArmonParameters, data::ArmonDualData, comm_array, side::Side)
-    (; nx, ny) = params
-
-    range = ghost_domain(params, side)
-    side_length = (side == Left || side == Right) ? ny : nx
-
-    return write_border_array!(params, device(data), range, side_length, comm_array)
-end
-
-
-function copy_border_array_to_buffer!(params::ArmonParameters, data::ArmonDualData, side::Side)
-    comm_array = get_send_comm_array(data, side)
-    read_border_array!(params, data, comm_array, side)
-    copy_to_send_buffer!(data, comm_array, side)
-end
-
-
-function copy_buffer_to_border_array!(params::ArmonParameters, data::ArmonDualData, side::Side)
-    comm_array = get_recv_comm_array(data, side)
-    copy_from_recv_buffer!(data, comm_array, side;)
-    write_border_array!(params, data, comm_array, side)
-end
-
-
-function request_task(request)
-    MPI.Start(request)
-    done = false
-    while !done
-        done = MPI.Test(request)
-        yield()
+        # Real cells of 2 to ghosts of 1
+        # TODO: KernelAbstractions.Extras.@unroll ??
+        for v in 1:N
+            vars₁[v][ig₁ + j₁] = vars₂[v][i₂ + j₂]
+        end
     end
 end
 
 
-function halo_exchange!(params::ArmonParameters, data::ArmonDualData, side::Side)
-    # Exchange with the neighbour the cells on the side
-    copy_border_array_to_buffer!(params, data, side)
+@generic_kernel function block_ghost_exchange(
+    vars₁::NTuple{N, V},
+    vars₂::NTuple{N, V},
+    bsize::BlockSize, axis::Axis, side₁::Side
+) where {N, V}
+    @kernel_init begin
+        side₂ = opposite_of(side₁)
 
-    # If `params.async_comms == true`, then communications are done in a separate task,
-    # therefore all waits apply only to the task's stream.
+        # Offsets to first ghost cell
+        sg  = stride_along(bsize, axis)
+        sg₁ = ifelse(side₁ in first_sides(), -sg, sg)
+        sg₂ = ifelse(side₂ in first_sides(), -sg, sg)
+
+        # Convertion from `i₁` to `i₂`, exploiting the fact that both blocks have the same size
+        d₂ = stride_along(bsize, axis) * (real_size_along(bsize, axis) - 1)
+        d₂ = ifelse(side₂ in first_sides(), -d₂, d₂)
+    end
+
+    i₁ = @index_2D_lin()
+    i₂ = i₁ + d₂
+
+    ig₁ = i₁ + sg₁
+    ig₂ = i₂ + sg₂
+
+    vars_ghost_exchange(
+        vars₁, i₁, ig₁, sg₁,
+        vars₂, i₂, ig₂, sg₂,
+        ghosts(bsize)
+    )
+end
+
+
+function block_ghost_exchange(
+    params::ArmonParameters, blk₁::LocalTaskBlock{V, Size}, blk₂::LocalTaskBlock{V, Size}, side::Side
+) where {V, Size <: StaticBSize}
+    # Exchange between two blocks with the same dimensions
+    domain = border_domain(blk₁.size, side)
+    # println()
+    # @show blk.pos params.current_axis side domain blk.size stride_along(blk.size, params.current_axis) (side in first_sides())
+    block_ghost_exchange(params, domain,
+        comm_vars(blk₁), comm_vars(blk₂),
+        blk₁.size, params.current_axis, side
+    )
+end
+
+
+@generic_kernel function block_ghost_exchange(
+    vars₁::NTuple{N, V}, bsize₁::BlockSize,
+    vars₂::NTuple{N, V}, bsize₂::BlockSize,
+    axis::Axis, side₁::Side
+) where {N, V}
+    @kernel_init begin
+        side₂ = opposite_of(side₁)
+
+        # Offsets to first ghost cell
+        sg₁ = stride_along(bsize₁, axis)
+        sg₂ = stride_along(bsize₂, axis)
+        sg₁ = ifelse(side₁ in first_sides(), -sg₁, sg₁)
+        sg₂ = ifelse(side₂ in first_sides(), -sg₂, sg₂)
+    end
+
+    i₁ = @index_2D_lin()
+
+    # `bsize₁` and `bsize₂` are different, therefore such is the iteration domain. We translate the
+    # `i₁` index to its reciprocal `i₂` on the other side using the nD index.
+    I₁ = position(bsize₁, i₁)
+
+    # TODO: cleanup
+    I₂x = ifelse(side₂ in sides_along(X_axis), ifelse(side₂ in first_sides(), 1, real_block_size(bsize₂)[1]), I₁[1])
+    I₂y = ifelse(side₂ in sides_along(Y_axis), ifelse(side₂ in first_sides(), 1, real_block_size(bsize₂)[2]), I₁[2])
+    I₂ = (I₂x, I₂y)
+    # TODO: Unreadable but efficient and dimension-agnostic?
+    # I₂ = ifelse.(
+    #     in.(side₂, (sides_along(X_axis), sides_along(Y_axis))),
+    #     ifelse.(side₂ in first_sides(), 1, real_block_size(bsize₂)),
+    #     I₁
+    # )
+
+    i₂ = lin_position(bsize₂, I₂)
+
+    ig₁ = i₁ + sg₁
+    ig₂ = i₂ + sg₂
+
+    vars_ghost_exchange(
+        vars₁, i₁, ig₁, sg₁,
+        vars₂, i₂, ig₂, sg₂,
+        ghosts(bsize₁)
+    )
+end
+
+
+function block_ghost_exchange(
+    params::ArmonParameters, blk₁::LocalTaskBlock{V}, blk₂::LocalTaskBlock{V}, side::Side
+) where {V}
+    # Exchange between two blocks with (possibly) different dimensions, but the same length along `side`
+    domain = border_domain(blk₁.size, side)
+    block_ghost_exchange(params, domain,
+        comm_vars(blk₁), blk₁.size,
+        comm_vars(blk₂), blk₂.size,
+        params.current_axis, side
+    )
+end
+
+
+@generic_kernel function pack_to_array!(
+    bsize::BlockSize, side::Side, array::V, vars::NTuple{N, V}
+) where {N, V}
+    idx = @index_2D_lin()
+    itr = @iter_idx()
+
+    (i, i_g) = divrem(itr - 1, ghosts(bsize))
+    i_arr = (i_g * size_along(bsize, side) + i) * N
+
+    # TODO: KernelAbstractions.Extras.@unroll ??
+    for v in 1:N
+        array[i_arr+v] = vars[v][idx]
+    end
+end
+
+
+@generic_kernel function unpack_from_array!(
+    bsize::BlockSize, side::Side, array::V, vars::NTuple{N, V}
+) where {N, V}
+    idx = @index_2D_lin()
+    itr = @iter_idx()
+
+    (i, i_g) = divrem(itr - 1, ghosts(bsize))
+    i_arr = (i_g * size_along(bsize, side) + i) * N
+
+    # TODO: KernelAbstractions.Extras.@unroll ??
+    for v in 1:N
+        array[i_arr+v] = vars[v][idx]
+    end
+end
+
+
+function block_ghost_exchange(
+    params::ArmonParameters, blk::LocalTaskBlock{V}, other_blk::RemoteTaskBlock{B}, side::Side
+) where {V, B}
+    if other_blk.rank == -1
+        # `other_blk` is fake, this is the border of the global domain
+        return boundary_conditions!(params, blk, side)
+    end
+
+    # Exchange between one local block and a remote block from another sub-domain
+    # TODO: use RMA with processes local to the node.
+
+    if V !== B
+        # MPI buffers are not on the device. We first need to copy them to the host memory.
+        device_to_host!(blk)
+    end
+
+    send_domain = border_domain(blk.size, side)
+    recv_domain = shift_dir(send_domain, axis_of(side), side in first_sides() ? -ghosts(blk.size) : ghosts(blk.size))
+
+    vars = comm_vars(blk)
+    pack_to_array!(params, blk, send_domain, blk.size, side, other_blk.send_buf.data, vars)
+
     wait(params)  # Wait for the copy to complete
 
-    send_request = data.requests[side].send
-    recv_request = data.requests[side].recv
+    MPI.Start(send_request)
+    MPI.Start(recv_request)
 
-    # TODO: if the @sync @async does not introduce too much latency, keep it and remove the other branch
-    @section "MPI" if params.async_comms
-        # Wait in coordination with Julia's scheduler
-        @sync begin
-            @async request_task(send_request)
-            @async request_task(recv_request)
-        end
-    else
-        MPI.Start(send_request)
-        MPI.Start(recv_request)
+    # Cooperative wait with Julia's scheduler
+    wait(send_request)
+    wait(recv_request)
 
-        MPI.Wait(send_request)
-        MPI.Wait(recv_request)
-    end
+    unpack_from_array!(params, blk, recv_domain, blk.size, side, other_blk.recv_buf.data, vars)
 
-    copy_buffer_to_border_array!(params, data, side)
-end
-
-
-function boundary_conditions!(params::ArmonParameters, data::ArmonDualData, sides::Tuple{Vararg{Side}})
-    # TODO : use active RMA instead? => maybe but it will (maybe) not work with GPUs: 
-    #   https://www.open-mpi.org/faq/?category=runcuda
-    # TODO : use CUDA/ROCM-aware MPI
-
-    if !(params.use_MPI && params.async_comms)
-        # We need a special ordering for synchronous communications in order to avoid deadlocks.
-        # This method makes each successive sub-domain do their sides in reverse, therefore two
-        # neighbouring sub-domains will attempt to exchange their cells at the same time:
-        # ... (left then right) ; (right then left) ; (left then right) ; (right then left) ...
-        if isodd(grid_coord_along(params))
-            sides = reverse(sides)
-        end
-    end
-
-    for side in sides 
-        if has_neighbour(params, side)
-            halo_exchange!(params, data, side)
-        else
-            boundary_conditions!(params, data, side)
-        end
+    if V !== B
+        # MPI buffers are not on the device. Retreive the result of the exchange to the device.
+        host_to_device!(blk)
     end
 end
 
 
-function boundary_conditions!(params::ArmonParameters, data::ArmonDualData, sides::Symbol)
-    if sides === :outer_lb
-        side = params.current_axis == X_axis ? Left : Bottom
-        boundary_conditions!(params, data, (side,))
-    elseif sides === :outer_rt
-        side = params.current_axis == X_axis ? Right : Top
-        boundary_conditions!(params, data, (side,))
-    else
-        solver_error(:config, "Unknown sides: $sides")
+function block_ghost_exchange(params::ArmonParameters, grid::BlockGrid)
+    side = first_side(params.current_axis)  # `Left`  or `Bottom`
+    other_side = opposite_of(side)          # `Right` or `Top`
+    other_side_offset = CartesianIndex(offset_to(other_side))
+
+    @iter_blocks for blk in device_blocks(grid)
+        # Parse through all blocks, each time updating the Left/Bottom neighbours
+        other_blk = blk.neighbours[Int(side)]
+        block_ghost_exchange(params, blk, other_blk, side)
+
+        if !in_grid(blk.pos + other_side_offset, grid.grid_size)
+            # Blocks at the edge of the grid along the current axis need an extra exchange
+            other_blk = blk.neighbours[Int(other_side)]
+            block_ghost_exchange(params, blk, other_blk, other_side)
+        end
     end
-end
-
-
-function boundary_conditions!(params::ArmonParameters, data::ArmonDualData)
-    boundary_conditions!(params, data, sides_along(params.current_axis))
 end

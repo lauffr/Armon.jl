@@ -1,27 +1,47 @@
 
-function write_data_to_file(params::ArmonParameters, data::ArmonDataOrDual,
-        col_range, row_range, file; direct_indexing=false, for_3D=true, more_vars=())
-    @indexing_vars(params)
+# TODO: use hdf5 for much more efficient read/write
 
-    vars_to_write = saved_variables(data isa ArmonDualData ? host(data) : data; more_vars)
+function write_blocks_to_file(
+    params::ArmonParameters, grid::BlockGrid, file::IO;
+    global_ghosts=false, all_ghosts=false, for_3D=true, more_vars=()
+)
+    vars_to_write = tuple(saved_vars()..., more_vars...)
 
     p = params.output_precision
     format = Printf.Format(join(repeat(["%#$(p+7).$(p)e"], length(vars_to_write)), ", ") * "\n")
 
-    # TODO: center the positions of the cells
-
-    for j in col_range
-        for i in row_range
-            if direct_indexing
-                idx = i + j - 1
-            else
-                idx = @i(i, j)
-            end
-
-            Printf.format(file, format, getindex.(vars_to_write, idx)...)
+    # Write cells in the correct ascending (X, Y, Z) order, combining the cells of all blocks
+    prev_row_idx = nothing
+    for (blk, row_idx, row_range) in BlockRowIterator(grid; global_ghosts, all_ghosts, device_blocks=false)
+        if prev_row_idx != row_idx && !isnothing(prev_row_idx)
+            for_3D && println(file)  # Separate rows to use pm3d plotting with gnuplot
         end
 
-        for_3D && println(file)  # Separate rows to use pm3d plotting with gnuplot
+        vars = getfield.(Ref(blk), vars_to_write)
+        # TODO: center the positions of the cells
+        for idx in row_range
+            Printf.format(file, format, getindex.(vars, idx)...)
+        end
+
+        prev_row_idx = row_idx
+    end
+end
+
+
+function read_data_from_file(
+    ::ArmonParameters{T}, grid::BlockGrid, file::IO;
+    global_ghosts=false, all_ghosts=false, more_vars=()
+) where {T}
+    vars_to_read = tuple(saved_vars()..., more_vars...)
+
+    for (blk, row_range) in BlockRowIterator(grid; global_ghosts, all_ghosts, device_blocks=false)
+        vars = getfield.(Ref(blk), vars_to_read)
+        for idx in row_range
+            for var in vars[1:end-1]
+                var[idx] = parse(T, readuntil(file, ','))
+            end
+            vars[end][idx] = parse(T, readuntil(file, '\n'))
+        end
     end
 end
 
@@ -44,126 +64,18 @@ function build_file_path(params::ArmonParameters, file_name::String)
 end
 
 
-function write_sub_domain_file(params::ArmonParameters, data::ArmonDataOrDual, file_name::String;
-        no_msg=false, options...)
-    (; silent, nx, ny, is_root, nghost) = params
-
+function write_sub_domain_file(
+    params::ArmonParameters, data::BlockGrid, file_name::String;
+    no_msg=false, options...
+)
     output_file_path = build_file_path(params, file_name)
-
     open(output_file_path, "w") do file
-        col_range = 1:ny
-        row_range = 1:nx
-        if params.write_ghosts
-            col_range = inflate(col_range, nghost)
-            row_range = inflate(row_range, nghost)
-        end
-
-        write_data_to_file(params, data, col_range, row_range, file; options...)
+        global_ghosts = params.write_ghosts
+        write_blocks_to_file(params, data, file; global_ghosts, options...)
     end
 
-    if !no_msg && is_root && silent < 2
+    if !no_msg && params.is_root && params.silent < 2
         println("\nWrote to files $(output_file_path)_*x*")
-    end
-end
-
-
-function write_slices_files(params::ArmonParameters, data::ArmonDataOrDual, file_name::String; no_msg=false)
-    (; output_dir, silent, nx, ny, use_MPI, is_root, cart_comm, global_grid, proc_dims, cart_coords) = params
-
-    if is_root && !isdir(output_dir)
-        mkpath(output_dir)
-    end
-
-    # Wait for the root command to complete
-    use_MPI && MPI.Barrier(cart_comm)
-
-    (g_nx, g_ny) = global_grid
-    (px, py) = proc_dims
-    (cx, cy) = cart_coords
-
-    ((nx != ny) || (px != py)) && solver_error(:config, "Domain slices are only implemented for square domains on a square process grid.")
-
-    # Middle row
-    cy_mid = cld(py, 2) - 1
-    if cy == cy_mid
-        y_mid = cld(g_ny, 2) - ny * cy + 1
-        output_file_path_X = build_file_path(params, file_name * "_X")
-        open(output_file_path_X, "w") do file
-            col_range = y_mid:y_mid
-            row_range = 1:nx
-            write_data_to_file(params, data, col_range, row_range, file; for_3D=false)
-        end
-    end
-
-    # Middle column
-    cx_mid = cld(px, 2) - 1
-    if cx == cx_mid
-        x_mid = cld(g_nx, 2) - nx * cx + 1
-        output_file_path_Y = build_file_path(params, file_name * "_Y")
-        open(output_file_path_Y, "w") do file
-            col_range = 1:ny
-            row_range = x_mid:x_mid
-            write_data_to_file(params, data, col_range, row_range, file; for_3D=false)
-        end
-    end
-
-    # Diagonal
-    if cx == cy
-        output_file_path_D = build_file_path(params, file_name * "_D")
-        open(output_file_path_D, "w") do file
-            col_range = 1:1
-            row_range = params.ideb:(params.row_length+1):(params.ifin+params.row_length+1)
-            write_data_to_file(params, data, col_range, row_range, file; for_3D=false, direct_indexing=true)
-        end
-    end
-
-    if !no_msg && is_root && silent < 2
-        if params.use_MPI
-            println("Wrote slices to files $(joinpath(output_dir, file_name))_*_*x*")
-        else
-            println("Wrote slices to files $(joinpath(output_dir, file_name))_*")
-        end
-    end
-end
-
-
-function read_data_from_file(params::ArmonParameters{T}, data::ArmonDataOrDual,
-        col_range, row_range, file; direct_indexing=false, more_vars=()) where T
-    @indexing_vars(params)
-
-    vars_to_read = saved_variables(data isa ArmonDualData ? host(data) : data; more_vars)
-
-    for j in col_range
-        for i in row_range
-            if direct_indexing
-                idx = i + j - 1
-            else
-                idx = @i(i, j)
-            end
-
-            for var in vars_to_read[1:end-1]
-                var[idx] = parse(T, readuntil(file, ','))
-            end
-            vars_to_read[end][idx] = parse(T, readuntil(file, '\n'))
-        end
-    end
-end
-
-
-function read_sub_domain_file!(params::ArmonParameters, data::ArmonDataOrDual, file_name::String)
-    (; nx, ny, nghost) = params
-
-    file_path = build_file_path(params, file_name)
-
-    open(file_path, "r") do file
-        col_range = 1:ny
-        row_range = 1:nx
-        if params.write_ghosts
-            col_range = inflate(col_range, nghost)
-            row_range = inflate(row_range, nghost)
-        end
-
-        read_data_from_file(params, data, col_range, row_range, file)
     end
 end
 
@@ -192,38 +104,42 @@ end
 # Comparison functions
 #
 
-function compare_data(label::String, params::ArmonParameters,
-        ref_data::ArmonData, our_data::ArmonData; mask=nothing, vars=saved_variables())
-    (; row_length, nghost, nbcell, comparison_tolerance) = params
+function compare_block(
+    params::ArmonParameters, ref_blk::LocalTaskBlock, our_blk::LocalTaskBlock, label::String;
+    vars=saved_vars()
+)
     different = false
 
-    for name in vars
-        ref_val = getfield(ref_data, name)
-        our_val = getfield(our_data, name)
+    for var in vars
+        ref_var = getfield(ref_blk, var)
+        our_var = getfield(our_blk, var)
 
-        diff_mask = .~ isapprox.(ref_val, our_val; rtol=comparison_tolerance)
-        !params.write_ghosts && (diff_mask .*= our_data.domain_mask)
-        !isnothing(mask) && (diff_mask .*= mask)
+        diff_mask = (!isapprox).(ref_var, our_var; rtol=params.comparison_tolerance)
+        !params.write_ghosts && (diff_mask .*= is_ghost.(Ref(our_blk.size), 1:prod(block_size(our_blk))))
+
         diff_count = sum(diff_mask)
+        diff_count == 0 && continue
 
-        if diff_count > 0
-            !different && println("At $label:")
-            different = true
-            print("$diff_count differences found in $name")
-            if diff_count ≤ 200
-                println(" (ref ≢ current)")
-                for idx in 1:nbcell
-                    !diff_mask[idx] && continue
-                    i, j = ((idx-1) % row_length) + 1 - nghost, ((idx-1) ÷ row_length) + 1 - nghost
-                    val_diff = ref_val[idx] - our_val[idx]
-                    diff_ulp = val_diff / eps(ref_val[idx])
-                    abs(diff_ulp) > 1e10 && (diff_ulp = Inf)
-                    @printf(" - %5d (%3d,%3d): %10.5g ≢ %10.5g (%11.5g, ulp: %8g)\n", idx, i, j, 
-                        ref_val[idx], our_val[idx], val_diff, diff_ulp)
-                end
-            else
-                println()
+        !different && println("At $label, in block $(our_blk.pos):")
+        different = true
+        print("  $diff_count differences found in $var")
+
+        if diff_count ≤ 200
+            println(" (ref ≢ current)")
+            for (idx, mask) in enumerate(diff_mask)
+                !mask && continue
+                I = position(our_blk.size, idx)
+
+                val_diff = ref_var[idx] - our_var[idx]
+                diff_ulp = val_diff / eps(ref_var[idx])
+                abs(diff_ulp) > 1e10 && (diff_ulp = Inf)
+
+                pos_str = join(map(i -> @sprintf("%3d"), I), ',')
+                @printf("   - %5d (%s): %10.5g ≢ %10.5g (%11.5g, ulp: %8g)\n",
+                    idx, pos_str, ref_var[idx], our_var[idx], val_diff, diff_ulp)
             end
+        else
+            println()
         end
     end
 
@@ -231,38 +147,24 @@ function compare_data(label::String, params::ArmonParameters,
 end
 
 
-function domain_mask_with_ghosts(params::ArmonParameters{T}, mask::V) where {T, V <: AbstractArray{T}}
-    (; nbcell, nx, ny, nghost, row_length) = params
-
-    r = nghost
-    axis = params.current_axis
-
-    for i in 1:nbcell
-        ix = ((i-1) % row_length) - nghost
-        iy = ((i-1) ÷ row_length) - nghost
-
-        mask[i] = (
-               (-r ≤ ix < nx+r && -r ≤ iy < ny+r)  # The sub-domain region plus a ring of ghost cells...
-            && ( 0 ≤ ix < nx   ||  0 ≤ iy < ny  )  # ...while excluding the corners of the sub-domain...
-            &&((axis == X_axis &&  0 ≤ iy < ny  )  # ...and excluding the ghost cells outside of the
-            || (axis == Y_axis &&  0 ≤ ix < nx  )) # current axis
-        ) ? 1 : 0
+function compare_data(
+    params::ArmonParameters, ref_data::BlockGrid, our_data::BlockGrid, label::String;
+    vars=saved_vars()
+)
+    different = false
+    for (ref_blk, our_blk) in zip(host_blocks(ref_data), host_blocks(our_data))
+        different |= compare_block(params, ref_blk, our_blk, label; vars)
     end
+    return different
 end
 
 
-function compare_with_file(params::ArmonParameters, data::ArmonData,
-        file_name::String, label::String)
-
-    ref_data = ArmonData(params)
+function compare_with_file(
+    params::ArmonParameters, grid::BlockGrid, file_name::String, label::String
+)
+    ref_data = BlockGrid(params)
     read_sub_domain_file!(params, ref_data, file_name)
-
-    if params.use_MPI && params.write_ghosts
-        domain_mask_with_ghosts(params, ref_data.domain_mask)
-        different = compare_data(label, params, ref_data, data; mask=ref_data.domain_mask)
-    else
-        different = compare_data(label, params, ref_data, data)
-    end
+    different = compare_data(params, ref_data, grid, label)
 
     if params.use_MPI
         different = MPI.Allreduce(different, |, params.cart_comm)
@@ -272,40 +174,39 @@ function compare_with_file(params::ArmonParameters, data::ArmonData,
 end
 
 
-function step_checkpoint(params::ArmonParameters, data::ArmonDualData, step_label::String)
-    if params.compare
-        wait(params)
+function step_checkpoint(params::ArmonParameters, grid::BlockGrid, step_label::String)
+    !params.compare && return false
 
-        device_to_host!(data)
-        h_data = host(data)
+    wait(params)
+    device_to_host!(grid)
+    wait(params)
 
-        step_file_name = params.output_file * @sprintf("_%03d_%s", params.cycle, step_label)
-        step_file_name *= "_" * string(params.current_axis)[1]
+    step_file_name = params.output_file * @sprintf("_%03d_%s", params.cycle, step_label)
+    step_file_name *= "_" * string(params.current_axis)[1]
 
-        if params.is_ref
-            if step_label == "time_step"
-                write_time_step_file(params, step_file_name)
-            else
-                write_sub_domain_file(params, h_data, step_file_name; no_msg=true)
-            end
+    if params.is_ref
+        if step_label == "time_step"
+            write_time_step_file(params, step_file_name)
         else
-            if step_label == "time_step"
-                ref_dt = read_time_step_file(params, step_file_name)
-                different = isapprox(ref_dt, params.curr_cycle_dt; rtol=params.comparison_tolerance)
-                @printf("Time step difference: ref Δt = %.18f, Δt = %.18f, diff = %.18f\n",
-                        ref_dt, params.curr_cycle_dt, ref_dt - params.curr_cycle_dt)
-            else
-                different = compare_with_file(params, h_data, step_file_name, step_label)
-            end
-
-            if different
-                write_sub_domain_file(params, h_data, step_file_name * "_diff"; no_msg=true)
-                println("Difference file written to $(step_file_name)_diff")
-            end
-
-            return different
+            write_sub_domain_file(params, grid, step_file_name; no_msg=true)
         end
-    end
 
-    return false
+        return false
+    else
+        if step_label == "time_step"
+            ref_dt = read_time_step_file(params, step_file_name)
+            different = isapprox(ref_dt, params.curr_cycle_dt; rtol=params.comparison_tolerance)
+            @printf("Time step difference: ref Δt = %.18f, Δt = %.18f, diff = %.18f\n",
+                    ref_dt, params.curr_cycle_dt, ref_dt - params.curr_cycle_dt)
+        else
+            different = compare_with_file(params, grid, step_file_name, step_label)
+        end
+
+        if different
+            write_sub_domain_file(params, grid, step_file_name * "_diff"; no_msg=true)
+            println("Difference file written to $(step_file_name)_diff")
+        end
+
+        return different
+    end
 end

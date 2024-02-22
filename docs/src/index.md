@@ -25,8 +25,6 @@ armon
 SolverStats
 StepsRanges
 data_type
-@indexing_vars
-@i
 @reuse_tls
 @section
 ```
@@ -34,12 +32,12 @@ data_type
 ## Data
 
 ```@docs
-ArmonData
-ArmonDualData
+BlockGrid
+TaskBlock
+LocalTaskBlock
+RemoteTaskBlock
 device_to_host!
 host_to_device!
-iter_recv_requests
-iter_send_requests
 buffers_on_device
 ```
 

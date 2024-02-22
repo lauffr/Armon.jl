@@ -1,25 +1,24 @@
 
 using Printf
-import Armon: @i, @indexing_vars, ArmonData, init_test, time_loop, write_sub_domain_file, test_name
-import Armon: Axis, X_axis, Y_axis, main_variables
+import Armon: Axis, X_axis, Y_axis
 
 
 function cmp_cpu_with_reference(test::Symbol, type::Type; options...)
     ref_params = get_reference_params(test, type; options...)
     dt, cycles, data = run_armon_reference(ref_params)
     T = data_type(ref_params)
-    ref_data = ArmonData(ref_params)
+    ref_data = BlockGrid(ref_params)
 
     differences_count, max_diff = compare_with_reference_data(
         ref_params, dt, cycles,
-        host(data), ref_data,
+        data, ref_data,
         save_diff=WRITE_FAILED
     )
 
     if differences_count > 0 && WRITE_FAILED
-        file_name = "test_$(test_name(ref_params.test))_$(T)"
+        file_name = "test_$(Armon.test_name(ref_params.test))_$(T)"
         open(file_name, "w") do file
-            write_reference_data(ref_params, file, data, dt, cycles; more_vars=(:work_array_1,))
+            write_reference_data(ref_params, file, data, dt, cycles; more_vars=(:work_1,))
         end
     end
 
@@ -32,33 +31,36 @@ end
 
 function axis_invariance(test::Symbol, type::Type, axis::Axis; options...)
     ref_params = get_reference_params(test, type; options...)
-    dt, cycles, data = run_armon_reference(ref_params)
-
-    (; nx, ny) = ref_params
-    ng = ref_params.nghost
-    lx = ref_params.row_length
-    ly = ref_params.col_length
-
-    if axis == X_axis
-        r = (1:nx-1, :)
-        r_offset = (2:nx, :)
-    else
-        r = (:, 1:ny-1)
-        r_offset = (:, 2:ny)
-    end
+    _, _, data = run_armon_reference(ref_params)
 
     atol = abs_tol(type, ref_params.test)
     rtol = rel_tol(type, ref_params.test)
 
-    vars = setdiff(main_variables(), (:x, :y))
-    @testset "$var" for var in vars
-        v_data = getfield(host(data), var)
-        v_data = reshape(v_data, lx, ly)  # 1D to 2D array
-        v_data = view(v_data, ng+1:lx-ng, ng+1:ly-ng)  # the nx × ny array of real (non-ghost) data
+    vars = setdiff(Armon.main_vars(), (:x, :y))
+    vars_errors = Dict(vars .=> 0)
 
-        # Substract each row/column with its neighbour => if the axis invariance is ok it should be 0
-        errors_count = count((!isapprox).(v_data[r...], v_data[r_offset...]; atol, rtol))
-        @test errors_count == 0
+    for blk in Armon.host_blocks(data)
+        bsize = blk.size
+        blk_size = Armon.block_size(bsize)
+        real_blk_size = Armon.real_block_size(bsize)
+        real_blk_range = (.+).(Base.oneto.(real_blk_size), Armon.ghosts(bsize))
+
+        r        = ntuple(i -> i == Int(axis) ? real_blk_size[i][1:end-1] : Colon(), ndims(bsize))
+        r_offset = ntuple(i -> i == Int(axis) ? real_blk_size[i][2:end]   : Colon(), ndims(bsize))
+
+        for var in vars
+            v_data = getfield(blk, var)
+            v_data = reshape(v_data, blk_size)  # 1D to n-D array
+            v_data = view(v_data, real_blk_range...)  # the real (non-ghost) data
+    
+            # Substract each axis with its neighbour => if the axis invariance is ok it should be 0
+            errors_count = count((!isapprox).(v_data[r...], v_data[r_offset...]; atol, rtol))
+            vars_errors[var] += errors_count
+        end
+    end
+
+    @testset "$var" for var in vars
+        @test vars_errors[var] == 0
     end
 end
 
@@ -66,32 +68,25 @@ end
 function uninit_vars_propagation(test, type; options...)
     ref_params = get_reference_params(test, type; options...)
 
-    data = ArmonDualData(ref_params)
-    init_test(ref_params, data)
+    data = BlockGrid(ref_params)
+    Armon.init_test(ref_params, data)
 
-    mask = host(data).domain_mask
     big_val = type == Float32 ? 1e30 : 1e100
-    for i in 1:ref_params.nbcell
-        mask == 0 || continue
-        rho[i]  = big_val
-        Emat[i] = big_val
-        umat[i] = big_val
-        vmat[i] = big_val
-        pmat[i] = big_val
-        cmat[i] = big_val
-        ustar[i] = big_val
-        pstar[i] = big_val
-        work_array_1[i] = big_val
-        work_array_2[i] = big_val
-        work_array_3[i] = big_val
-        work_array_4[i] = big_val
+    vars = setdiff(Armon.main_vars(), (:x, :y, :mask))
+    for blk in Armon.host_blocks(data)
+        for i in 1:prod(Armon.block_size(blk.size))
+            blk.mask[i] == 1 && continue  # only set `big_val` to ghost cells
+            for var in vars
+                getfield(blk, var)[i] = big_val
+            end
+        end
     end
 
-    dt, cycles, _ = time_loop(ref_params, data)
+    dt, cycles, _ = Armon.time_loop(ref_params, data)
 
-    ref_data = ArmonData(ref_params)
+    ref_data = BlockGrid(ref_params)
+    differences_count, max_diff = compare_with_reference_data(ref_params, dt, cycles, data, ref_data)
 
-    differences_count, max_diff = compare_with_reference_data(ref_params, dt, cycles, host(data), ref_data)
     @test differences_count == 0
     @test max_diff == 0
 end
@@ -116,8 +111,9 @@ end
     end
 
     @testset "Async code path" begin
-        @testset "$test" for test in (:Sod, :Sod_y, :Sod_circ, :Bizarrium, :Sedov)
-            cmp_cpu_with_reference(test, Float64; use_threading=false, use_simd=false, async_comms=true, use_MPI=false)
-        end
+        @test false skip=true
+        # @testset "$test" for test in (:Sod, :Sod_y, :Sod_circ, :Bizarrium, :Sedov)
+        #     cmp_cpu_with_reference(test, Float64; use_threading=false, use_simd=false, async_comms=true, use_MPI=false)
+        # end
     end
 end
