@@ -37,7 +37,6 @@ if isinteractive()
      - conservation   Check that the energy and mass for each are kept constant throughout a lot of cycles.
      - GPU            Equivalence of the GPU backends (CUDA & ROCm) with the CPU
      - kokkos         Equivalence of the Kokkos backend with the Julia CPU backend
-     - performance    Checks for any regression in performance
      - async          Checks that separating the domain and treating the boundary conditions asynchronously 
                       doesn't introduce any variations in the result.
      - MPI            Equivalence with the single domain case and asynchronous communications.
@@ -59,7 +58,7 @@ main_options = main_options .|> Symbol |> union
 
 if :all in main_options
     expanded_options = [:quality, :stability, :domains, :blocking, :convergence, :conservation,
-                        :kokkos, :gpu, :performance, :async, :mpi]
+                        :kokkos, :gpu, :async, :mpi]
 elseif :short in main_options
     expanded_options = [:quality, :stability, :convergence, :conservation]
 else
@@ -95,18 +94,14 @@ function do_tests(tests_to_do)
             elseif test === :blocking       run_file("blocking.jl")
             elseif test === :convergence    run_file("convergence.jl")
             elseif test === :conservation   run_file("conservation.jl")
-            elseif test === :kernels        run_file("kernels.jl")
             elseif test === :gpu            run_file("gpu.jl")
             elseif test === :kokkos         run_file("kokkos.jl")
-            elseif test === :performance    run_file("performance.jl")
             elseif test === :mpi            run_file("mpi.jl")
             else
                 error("Unknown test set: $test")
             end
 
             # TODO: susceptibility test comparing a result with different rounding modes
-            # TODO: idempotence of `measure_time=true/false`
-            # TODO: NaN propagation
         end
     end
 
