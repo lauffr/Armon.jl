@@ -12,15 +12,22 @@ using Preferences
 export ArmonParameters, BlockGrid, SolverStats, armon, data_type, memory_required
 export device_to_host!, host_to_device!
 
+# Forward declarations
+abstract type Limiter end
+abstract type RiemannScheme end
+abstract type ProjectionScheme end
+
 include("utils.jl")
 include("domain_ranges.jl")
-include("limiters.jl")
 include("tests.jl")
 include("parameters.jl")
 include("blocking/blocking.jl")
 include("profiling.jl")
 include("generic_kernel.jl")
 include("kernels.jl")
+include("limiters.jl")
+include("riemann_schemes.jl")
+include("projection_schemes.jl")
 include("halo_exchange.jl")
 include("io.jl")
 include("solver.jl")

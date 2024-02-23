@@ -1,83 +1,6 @@
 
 # TODO: make the stride deductible at compile-time (i.e. one kernel instanciation per axis)
 
-@kernel_function function acoustic_Godunov(
-    ρᵢ::T, ρᵢ₋₁::T, cᵢ::T, cᵢ₋₁::T,
-    uᵢ::T, uᵢ₋₁::T, pᵢ::T, pᵢ₋₁::T
-) where T
-    rc_l = ρᵢ₋₁ * cᵢ₋₁
-    rc_r = ρᵢ   * cᵢ
-    uˢᵢ = (rc_l * uᵢ₋₁ + rc_r * uᵢ +               (pᵢ₋₁ - pᵢ)) / (rc_l + rc_r)
-    pˢᵢ = (rc_r * pᵢ₋₁ + rc_l * pᵢ + rc_l * rc_r * (uᵢ₋₁ - uᵢ)) / (rc_l + rc_r)
-    return uˢᵢ, pˢᵢ
-end
-
-
-@generic_kernel function acoustic!(
-    s::Int, uˢ_::V, pˢ_::V,
-    ρ::V, uₐ::V, p::V, c::V
-) where V
-    u = uₐ  # `u` or `v` depending on the current axis
-    i = @index_2D_lin()
-    uˢ_[i], pˢ_[i] = acoustic_Godunov(
-        ρ[i], ρ[i-s], c[i], c[i-s],
-        u[i], u[i-s], p[i], p[i-s]
-    )
-end
-
-
-@generic_kernel function acoustic_GAD!(
-    s::Int, dt::T, dx::T,
-    uˢ::V, pˢ::V, ρ::V, uₐ::V, p::V, c::V,
-    limiter_tag::LimiterType
-) where {T, V <: AbstractArray{T}, LimiterType <: Limiter}
-    i = @index_2D_lin()
-
-    u = uₐ  # `u` or `v` depending on the current axis
-
-    # First order acoustic solver on the left cell
-    uˢ_i₋, pˢ_i₋ = acoustic_Godunov(
-        ρ[i-s], ρ[i-2s], c[i-s], c[i-2s],
-        u[i-s], u[i-2s], p[i-s], p[i-2s]
-    )
-
-    # First order acoustic solver on the current cell
-    uˢ_i, pˢ_i = acoustic_Godunov(
-        ρ[i], ρ[i-s], c[i], c[i-s],
-        u[i], u[i-s], p[i], p[i-s]
-    )
-
-    # First order acoustic solver on the right cell
-    uˢ_i₊, pˢ_i₊ = acoustic_Godunov(
-        ρ[i+s], ρ[i], c[i+s], c[i],
-        u[i+s], u[i], p[i+s], p[i]
-    )
-
-    # Second order GAD acoustic solver on the current cell
-
-    r_u₋ = (uˢ_i₊  -  u[i]) / (uˢ_i - u[i-s] + T(1e-6))
-    r_p₋ = (pˢ_i₊  -  p[i]) / (pˢ_i - p[i-s] + T(1e-6))
-    r_u₊ = (u[i-s] - uˢ_i₋) / (u[i] - uˢ_i   + T(1e-6))
-    r_p₊ = (p[i-s] - pˢ_i₋) / (p[i] - pˢ_i   + T(1e-6))
-
-    r_u₋ = limiter(r_u₋, LimiterType())
-    r_p₋ = limiter(r_p₋, LimiterType())
-    r_u₊ = limiter(r_u₊, LimiterType())
-    r_p₊ = limiter(r_p₊, LimiterType())
-
-    dm_l = ρ[i-s] * dx
-    dm_r = ρ[i]   * dx
-    Dm   = (dm_l + dm_r) / 2
-
-    rc_l = ρ[i-s] * c[i-s]
-    rc_r = ρ[i]   * c[i]
-    θ    = T(0.5) * (1 - (rc_l + rc_r) / 2 * (dt / Dm))
-
-    uˢ[i] = uˢ_i + θ * (r_u₊ * (u[i] - uˢ_i) - r_u₋ * (uˢ_i - u[i-s]))
-    pˢ[i] = pˢ_i + θ * (r_p₊ * (p[i] - pˢ_i) - r_p₋ * (pˢ_i - p[i-s]))
-end
-
-
 @generic_kernel function perfect_gas_EOS!(
     γ::T,
     ρ::V, E::V, u::V, v::V, p::V, c::V, g::V
@@ -142,81 +65,6 @@ end
     ρ[i]  = dm / (dx + dt * (uˢ[i+s] - uˢ[i]))
     u[i] += dt / dm * (pˢ[i]         - pˢ[i+s]          )
     E[i] += dt / dm * (pˢ[i] * uˢ[i] - pˢ[i+s] * uˢ[i+s])
-end
-
-
-@generic_kernel function euler_projection!(
-    s::Int, dx::T, dt::T,
-    uˢ::V, ρ::V, u::V, v::V, E::V,
-    advection_ρ::V, advection_uρ::V, advection_vρ::V, advection_Eρ::V
-) where {T, V <: AbstractArray{T}}
-    i = @index_2D_lin()
-
-    dX = dx + dt * (uˢ[i+s] - uˢ[i])
-
-    tmp_ρ  = (dX * ρ[i]        - (advection_ρ[i+s]  - advection_ρ[i] )) / dx
-    tmp_uρ = (dX * ρ[i] * u[i] - (advection_uρ[i+s] - advection_uρ[i])) / dx
-    tmp_vρ = (dX * ρ[i] * v[i] - (advection_vρ[i+s] - advection_vρ[i])) / dx
-    tmp_Eρ = (dX * ρ[i] * E[i] - (advection_Eρ[i+s] - advection_Eρ[i])) / dx
-
-    ρ[i] = tmp_ρ
-    u[i] = tmp_uρ / tmp_ρ
-    v[i] = tmp_vρ / tmp_ρ
-    E[i] = tmp_Eρ / tmp_ρ
-end
-
-
-@generic_kernel function advection_first_order!(
-    s::Int, dt::T,
-    uˢ::V, ρ::V, u::V, v::V, E::V,
-    advection_ρ::V, advection_uρ::V, advection_vρ::V, advection_Eρ::V
-) where {T, V <: AbstractArray{T}}
-    i = @index_2D_lin()
-    is = i
-    disp = dt * uˢ[i]
-    if disp > 0
-        i = i - s
-    end
-
-    advection_ρ[is]  = disp * (ρ[i]       )
-    advection_uρ[is] = disp * (ρ[i] * u[i])
-    advection_vρ[is] = disp * (ρ[i] * v[i])
-    advection_Eρ[is] = disp * (ρ[i] * E[i])
-end
-
-
-@generic_kernel function advection_second_order!(
-    s::Int, dx::T, dt::T,
-    uˢ::V, ρ::V, u::V, v::V, E::V,
-    advection_ρ::V, advection_uρ::V, advection_vρ::V, advection_Eρ::V
-) where {T, V <: AbstractArray{T}}
-    i = @index_2D_lin()
-    is = i
-    disp = dt * uˢ[i]
-    if disp > 0
-        Δxₑ = -(dx - dt * uˢ[i-s])
-        i = i - s
-    else
-        Δxₑ = dx + dt * uˢ[i+s]
-    end
-
-    Δxₗ₋  = dx + dt * (uˢ[i]    - uˢ[i-s])
-    Δxₗ   = dx + dt * (uˢ[i+s]  - uˢ[i]  )
-    Δxₗ₊  = dx + dt * (uˢ[i+2s] - uˢ[i+s])
-
-    r₋  = (2 * Δxₗ) / (Δxₗ + Δxₗ₋)
-    r₊  = (2 * Δxₗ) / (Δxₗ + Δxₗ₊)
-
-    slopes_ρ  = slope_minmod(ρ[i-s]         , ρ[i]       , ρ[i+s]         , r₋, r₊)
-    slopes_uρ = slope_minmod(ρ[i-s] * u[i-s], ρ[i] * u[i], ρ[i+s] * u[i+s], r₋, r₊)
-    slopes_vρ = slope_minmod(ρ[i-s] * v[i-s], ρ[i] * v[i], ρ[i+s] * v[i+s], r₋, r₊)
-    slopes_Eρ = slope_minmod(ρ[i-s] * E[i-s], ρ[i] * E[i], ρ[i+s] * E[i+s], r₋, r₊)
-
-    length_factor = Δxₑ / (2 * Δxₗ)
-    advection_ρ[is]  = disp * (ρ[i]        - slopes_ρ  * length_factor)
-    advection_uρ[is] = disp * (ρ[i] * u[i] - slopes_uρ * length_factor)
-    advection_vρ[is] = disp * (ρ[i] * v[i] - slopes_vρ * length_factor)
-    advection_Eρ[is] = disp * (ρ[i] * E[i] - slopes_Eρ * length_factor)
 end
 
 
@@ -292,33 +140,6 @@ end
 # Wrappers
 #
 
-function numerical_fluxes!(params::ArmonParameters, blk::LocalTaskBlock)
-    # TODO: use methods instead of Symbols
-    range = block_domain_range(blk.size, params.steps_ranges.fluxes)
-    dt = params.cycle_dt
-    u = params.current_axis == X_axis ? blk.u : blk.v
-    s = stride_along(blk.size, params.current_axis)
-    if params.riemann == :acoustic  # 2-state acoustic solver (Godunov)
-        if params.scheme == :Godunov
-            return acoustic!(params, blk, range, s, blk.uˢ, blk.pˢ, u)
-        elseif params.scheme == :GAD
-            return acoustic_GAD!(params, blk, range, s, dt, u, params.riemann_limiter)
-        else
-            solver_error(:config, "Unknown acoustic scheme: ", params.scheme)
-        end
-    else
-        solver_error(:config, "Unknown Riemann solver: ", params.riemann)
-    end
-end
-
-
-function numerical_fluxes!(params::ArmonParameters, grid::BlockGrid)
-    @iter_blocks for blk in device_blocks(grid)
-        numerical_fluxes!(params, blk)
-    end
-end
-
-
 function update_EOS!(params::ArmonParameters, blk::LocalTaskBlock, t::TestCase)
     range = block_domain_range(blk.size, params.steps_ranges.EOS)
     gamma = data_type(params)(specific_heat_ratio(t))
@@ -371,70 +192,6 @@ end
 function cell_update!(params::ArmonParameters, grid::BlockGrid)
     @iter_blocks for blk in device_blocks(grid)
         cell_update!(params, blk)
-    end
-end
-
-
-@kernel_function function slope_minmod(uᵢ₋::T, uᵢ::T, uᵢ₊::T, r₋::T, r₊::T) where T
-    Δu₊ = r₊ * (uᵢ₊ - uᵢ )
-    Δu₋ = r₋ * (uᵢ  - uᵢ₋)
-    s = sign(Δu₊)
-    return s * max(0, min(s * Δu₊, s * Δu₋))
-end
-
-
-function advection_first_order!(params::ArmonParameters, blk::LocalTaskBlock)
-    advection_range = block_domain_range(blk.size, params.steps_ranges.advection)
-    s = stride_along(blk.size, params.current_axis)
-    advection_first_order!(params, blk, advection_range, s, params.cycle_dt,
-        blk.work_1, blk.work_2, blk.work_3, blk.work_4)
-end
-
-
-function advection_second_order!(params::ArmonParameters, blk::LocalTaskBlock)
-    advection_range = block_domain_range(blk.size, params.steps_ranges.advection)
-    s = stride_along(blk.size, params.current_axis)
-    advection_second_order!(params, blk, advection_range, s, params.cycle_dt,
-        blk.work_1, blk.work_2, blk.work_3, blk.work_4)
-end
-
-
-function euler_projection!(params::ArmonParameters, blk::LocalTaskBlock)
-    projection_range = block_domain_range(blk.size, params.steps_ranges.projection)
-    s = stride_along(blk.size, params.current_axis)
-    euler_projection!(params, blk, projection_range, s, params.cycle_dt,
-        blk.work_1, blk.work_2, blk.work_3, blk.work_4)
-end
-
-
-function projection_remap!(params::ArmonParameters, blk::LocalTaskBlock)
-    if params.projection == :euler
-        advection_first_order!(params, blk)
-    elseif params.projection == :euler_2nd
-        advection_second_order!(params, blk)
-    else
-        solver_error(:config, "Unknown projection scheme: $(params.projection)")
-    end
-
-    return euler_projection!(params, blk)
-end
-
-
-function projection_remap!(params::ArmonParameters, grid::BlockGrid)
-    @section "Advection" if params.projection == :euler
-        @iter_blocks for blk in device_blocks(grid)
-            advection_first_order!(params, blk)
-        end
-    elseif params.projection == :euler_2nd
-        @iter_blocks for blk in device_blocks(grid)
-            advection_second_order!(params, blk)
-        end
-    else
-        solver_error(:config, "Unknown projection scheme: $(params.projection)")
-    end
-
-    @section "Projection" @iter_blocks for blk in device_blocks(grid)
-        euler_projection!(params, blk)
     end
 end
 

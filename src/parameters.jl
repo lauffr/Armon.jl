@@ -95,16 +95,20 @@ List of profiling callbacks to use:
 
 ## Scheme and CFD solver
 
-    scheme = :GAD, riemann = :acoustic, riemann_limiter = :minmod
+    scheme = :GAD, riemann_limiter = :minmod
 
-`scheme` is the Riemann solver scheme to use: `:Godunov` (1st order) or `:GAD` (2nd order, +limiter).
-`riemann` is the type of Riemann solver, only `:acoustic`.
-`riemann_limiter` is the limiter to use for `scheme=:GAD`: `:no_limiter`, `:minmod` or `:superbee`.
+`scheme` is the Riemann solver scheme to use:
+ - `:Godunov` (1st order)
+ - `:GAD` (2nd order, with limiter).
+ 
+`riemann_limiter` is the limiter to use for the Riemann solver: `:no_limiter`, `:minmod` or `:superbee`.
 
 
-    projection = :euler
+    projection = :euler_2nd
 
-Scheme for the Eulerian remap step: `:euler` (1st order), `:euler_2nd` (2nd order, +minmod limiter)
+Scheme for the Eulerian remap step:
+ - `:euler` (1st order)
+ - `:euler_2nd` (2nd order, +minmod limiter)
 
 
     axis_splitting = :Sequential
@@ -122,7 +126,7 @@ Axis splitting to use:
 Number of cells of the global domain in each axes.
 
 
-    nghost = 2
+    nghost = 4
 
 Number of ghost cells. Must be greater or equal to the minimum number of ghost cells (min 1,
 `scheme=:GAD` adds one, `projection=:euler_2nd` adds one, `scheme=:GAD` + `projection=:euler_2nd`
@@ -222,9 +226,9 @@ field will contain the [`BlockGrid`](@ref) used by the solver.
 mutable struct ArmonParameters{Flt_T, Device, DeviceParams}
     # Test problem type, riemann solver and solver scheme
     test::TestCase
-    riemann::Symbol
-    scheme::Symbol
+    riemann_scheme::RiemannScheme
     riemann_limiter::Limiter
+    projection_scheme::ProjectionScheme
 
     # Domain parameters
     nghost::Int
@@ -237,7 +241,6 @@ mutable struct ArmonParameters{Flt_T, Device, DeviceParams}
     cst_dt::Bool
     dt_on_even_cycles::Bool
     axis_splitting::Symbol
-    projection::Symbol
 
     # Bounds
     maxtime::Flt_T
@@ -486,31 +489,35 @@ end
 
 
 function init_scheme(params::ArmonParameters{T};
-    scheme = :GAD, projection = :euler,
-    riemann = :acoustic, riemann_limiter = :minmod,
+    scheme = :GAD, projection = :euler_2nd,
+    riemann_limiter = :minmod,
     axis_splitting = :Sequential,
-    nghost = 2,
+    nghost = 4,
     cst_dt = false, Dt = 0., dt_on_even_cycles = false,
     options...
 ) where {T}
-    min_nghost = 1
-    min_nghost += (scheme != :Godunov)
-    min_nghost += (projection == :euler_2nd)
-    min_nghost += (projection == :euler_2nd) && (scheme != :Godunov)
-
-    if nghost < min_nghost
-        solver_error(:config, "Not enough ghost cells for the scheme and/or projection, \
-                               at least $min_nghost are needed, got $nghost")
+    if projection isa Symbol
+        projection = scheme_from_name(projection)
+    elseif !(projection isa ProjectionScheme)
+        solver_error(:config, "Expected a ProjectionScheme type or a Symbol, got: $scheme")
     end
 
-    if projection == :none
-        solver_error(:config, "Lagrangian mode unsupported")
+    if scheme isa Symbol
+        scheme = scheme_from_name(scheme)
+    elseif !(scheme isa RiemannScheme)
+        solver_error(:config, "Expected a RiemannScheme type or a Symbol, got: $scheme")
     end
 
     if riemann_limiter isa Symbol
         riemann_limiter = limiter_from_name(riemann_limiter)
     elseif !(riemann_limiter isa Limiter)
-        solver_error(:config, "Expected a Limiter type or a symbol, got: $riemann_limiter")
+        solver_error(:config, "Expected a Limiter type or a Symbol, got: $riemann_limiter")
+    end
+
+    min_nghost = stencil_width(scheme) * stencil_width(projection)
+    if nghost < min_nghost
+        solver_error(:config, "Not enough ghost cells for the riemann solver and projection, \
+                               at least $min_nghost are needed, got $nghost")
     end
 
     if cst_dt && Dt == zero(T)
@@ -518,9 +525,8 @@ function init_scheme(params::ArmonParameters{T};
     end
 
     params.nghost = nghost
-    params.scheme = scheme
-    params.projection = projection
-    params.riemann = riemann
+    params.riemann_scheme = scheme
+    params.projection_scheme = projection
     params.riemann_limiter = riemann_limiter
     params.axis_splitting = axis_splitting
     params.cst_dt = cst_dt
@@ -705,13 +711,12 @@ function print_parameters(io::IO, p::ArmonParameters; pad = 20)
     println(io, " ", "─" ^ (pad*2+2))
 
     print_parameter(io, pad, "test", p.test)
-    print_parameter(io, pad, "solver", p.riemann, nl=false)
-    print(io, ", ", p.scheme, " scheme")
-    if p.scheme != :Godunov
+    print_parameter(io, pad, "riemann scheme", p.riemann_scheme, nl=false)
+    if uses_limiter(p.riemann_scheme)
         print(io, " (with $(p.riemann_limiter))")
     end
-    proj_str = p.projection === :euler ? "1ˢᵗ order" : p.projection === :euler_2nd ? "2ⁿᵈ order" : "<unknown>"
-    println(io, ", ", proj_str, " projection")
+    println(io, ", ", p.projection_scheme)
+
     print_parameter(io, pad, "axis splitting", "", nl=false)
     if p.axis_splitting === :Sequential
         println(io, "X, Y ; X, Y")
@@ -928,18 +933,9 @@ function update_steps_ranges(params::ArmonParameters)
     nghost = params.nghost
     steps = params.steps_ranges
 
-    # Extra cells to compute in each step
-    extra_FLX = 1
-    extra_UP = 1
-
-    if params.projection == :euler
-        # No change
-    elseif params.projection == :euler_2nd
-        extra_FLX += 1
-        extra_UP  += 1
-    else
-        solver_error(:config, "Unknown scheme: $(params.projection)")
-    end
+    # Extra cells to compute in each step for the projection
+    extra_FLX = stencil_width(params.projection_scheme)
+    extra_UP = stencil_width(params.projection_scheme)
 
     # Real domain
     bl_corner = (0, 0)  # Bottom-Left corner offset
