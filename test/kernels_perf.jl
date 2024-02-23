@@ -114,7 +114,7 @@ function setup_params(type, n)
         test=:Sod_circ, riemann_limiter=:minmod,
         nghost=5, nx=n, ny=n,
         silent=5, write_output=false, measure_time=false,
-        use_MPI=false, async_comms=false,
+        use_MPI=false,
         use_gpu=USE_GPU, device=DEVICE, block_size=128,
         use_kokkos=USE_KOKKOS
     )

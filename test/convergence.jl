@@ -119,11 +119,4 @@ end
     @testset "Uninitialized values propagation" begin
         uninit_vars_propagation(:Sod_circ, Float64; use_threading=false, use_simd=false)
     end
-
-    @testset "Async code path" begin
-        @test false skip=true
-        # @testset "$test" for test in (:Sod, :Sod_y, :Sod_circ, :Bizarrium, :Sedov)
-        #     cmp_cpu_with_reference(test, Float64; use_threading=false, use_simd=false, async_comms=true, use_MPI=false)
-        # end
-    end
 end

@@ -289,7 +289,6 @@ mutable struct ArmonParameters{Flt_T, Device, DeviceParams}
     device::Device  # A KernelAbstractions.Backend, Kokkos.ExecutionSpace or CPU_HP
     backend_options::DeviceParams
     block_size::NTuple{2, Int}
-    tasks_storage::Dict{Symbol, Union{Nothing, IdDict}}
 
     # MPI
     use_MPI::Bool
@@ -304,8 +303,6 @@ mutable struct ArmonParameters{Flt_T, Device, DeviceParams}
     neighbours::Dict{Side, Int}  # Ranks of the neighbours of this process
     global_grid::NTuple{2, Int}  # Dimensions (nx, ny) of the global grid
     reorder_grid::Bool
-    comm_array_size::Int
-    async_comms::Bool
     gpu_aware::Bool
 
     # Tests & Comparison
@@ -319,7 +316,7 @@ mutable struct ArmonParameters{Flt_T, Device, DeviceParams}
 
     function ArmonParameters(; data_type = nothing, ieee_bits = 64, nx = 10, ny = 10, options...)
         if data_type === nothing
-        flt_type = (ieee_bits == 64) ? Float64 : Float32
+            flt_type = (ieee_bits == 64) ? Float64 : Float32
         else
             flt_type = data_type
         end
@@ -443,17 +440,12 @@ end
 
 
 function init_device(params::ArmonParameters;
-    async_comms = false,
     use_threading = true, use_simd = true,
     use_gpu = false, use_kokkos = false,
     block_size = nothing, use_cache_blocking = true,
     use_two_step_reduction = false,
     options...
 )
-    if async_comms
-        solver_error(:config, "Asynchronous communications are implicit with blocking")
-    end
-
     params.use_threading = use_threading
     params.use_simd = use_simd
     params.use_kokkos = use_kokkos
@@ -475,8 +467,6 @@ function init_device(params::ArmonParameters;
 
     length(block_size) > 2 && solver_error(:config, "Expected `block_size` to contain up to 2 elements, got: $block_size")
     params.block_size = tuple(block_size..., ntuple(Returns(1), 2 - length(block_size))...)
-
-    params.tasks_storage = Dict{Symbol, Union{Nothing, IdDict}}()
 
     return options
 end
@@ -612,9 +602,6 @@ function init_indexing(params::ArmonParameters; options...)
     params.global_grid = (g_nx, g_ny)
 
     params.dx = params.domain_size[1] / g_nx
-
-    # Array allocation sizes
-    params.comm_array_size = params.use_MPI ? max(nx, ny) * params.nghost * length(comm_variables()) : 0
 
     params.steps_ranges = StepsRanges()
 
@@ -990,7 +977,7 @@ function update_steps_ranges(params::ArmonParameters)
     steps.EOS = real_range  # The BC overwrites any changes to the ghost cells right after
 
     if params.current_axis == X_axis
-    # Fluxes are computed between 'i-s' and 'i', we need one more cell on the right to have all fluxes
+        # Fluxes are computed between 'i-s' and 'i', we need one more cell on the right to have all fluxes
         fluxes_bl  = (extra_FLX, 0); fluxes_tr  = (extra_FLX+1, 0)
         cell_up_bl = (extra_UP,  0); cell_up_tr = (extra_UP,    0)
         advec_bl   = (0,         0); advec_tr   = (1,           0)

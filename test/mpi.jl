@@ -120,7 +120,7 @@ end
 
 function ref_params_for_sub_domain(test::Symbol, type::Type, px, py; overriden_options...)
     ref_options = Dict{Symbol, Any}(
-        :use_MPI => true, :px => px, :py => py, :reorder_grid => true, :async_comms => false
+        :use_MPI => true, :px => px, :py => py, :reorder_grid => true
     )
     merge!(ref_options, overriden_options)
     return get_reference_params(test, type; ref_options...)
@@ -297,7 +297,6 @@ function test_halo_exchange(px, py, proc_in_grid, global_comm)
         # "Halo exchange", but with one neighbour at a time
         comm_array = Armon.get_send_comm_array(data, side)
         Armon.read_border_array!(ref_params, data, comm_array, side)
-        Armon.copy_to_send_buffer!(data, comm_array, side)
         wait(ref_params)
 
         requests = data.requests[side]
@@ -402,14 +401,6 @@ total_proc_count = MPI.Comm_size(MPI.COMM_WORLD)
                 end
             end
 
-            @testset "Async communications" begin
-                @testset "$test with $type" for type in TEST_TYPES_MPI, test in TEST_CASES_MPI
-                    @MPI_test comm begin
-                        test_reference("async", comm, test, type, px, py; async_comms=true)
-                    end skip=!enough_processes || !proc_in_grid
-                end
-            end
-
             @testset "Conservation" begin
                 @testset "$test" for test in (:Sod, :Sod_y, :Sod_circ)
                     if enough_processes && proc_in_grid
@@ -437,30 +428,27 @@ total_proc_count = MPI.Comm_size(MPI.COMM_WORLD)
 
 
         @testset "CUDA" begin
-            @testset "$test with $type (async: $async_comms)" for type in TEST_TYPES_MPI, test in TEST_CASES_MPI,
-                                                                  async_comms in (false, true)
+            @testset "$test with $type" for type in TEST_TYPES_MPI, test in TEST_CASES_MPI
                 @MPI_test comm begin
-                    test_reference("CUDA", comm, test, type, px, py; use_gpu=true, device=:CUDA, async_comms)
+                    test_reference("CUDA", comm, test, type, px, py; use_gpu=true, device=:CUDA)
                 end skip=!TEST_CUDA_MPI ||!enough_processes || !proc_in_grid
             end
         end
 
 
         @testset "ROCm" begin
-            @testset "$test with $type (async: $async_comms)" for type in TEST_TYPES_MPI, test in TEST_CASES_MPI,
-                                                                  async_comms in (false, true)
+            @testset "$test with $type" for type in TEST_TYPES_MPI, test in TEST_CASES_MPI
                 @MPI_test comm begin
-                    test_reference("ROCm", comm, test, type, px, py; use_gpu=true, device=:ROCM, async_comms)
+                    test_reference("ROCm", comm, test, type, px, py; use_gpu=true, device=:ROCM)
                 end skip=!TEST_ROCM_MPI || !enough_processes || !proc_in_grid
             end
         end
 
 
         @testset "Kokkos" begin
-            @testset "$test with $type (async: $async_comms)" for type in TEST_TYPES_MPI, test in TEST_CASES_MPI,
-                                                                  async_comms in (false, true)
+            @testset "$test with $type" for type in TEST_TYPES_MPI, test in TEST_CASES_MPI
                 @MPI_test comm begin
-                    test_reference("kokkos", comm, test, type, px, py; use_kokkos=true, async_comms)
+                    test_reference("kokkos", comm, test, type, px, py; use_kokkos=true)
                 end skip=!TEST_KOKKOS_MPI || !enough_processes || !proc_in_grid
             end
         end

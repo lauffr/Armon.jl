@@ -1,11 +1,8 @@
 module ArmonKokkos
 
 using Armon
-import Armon: ArmonData, Side, solver_error
-import Armon: NoLimiter, MinmodLimiter, SuperbeeLimiter
-import Armon: Sod, Sod_y, Sod_circ, Bizarrium, Sedov
-
-isdefined(Base, :get_extension) ? (import Kokkos) : (import ..Kokkos)
+import Armon: solver_error
+import Kokkos
 import Kokkos: CMakeKokkosProject, option!
 using MPI
 
@@ -51,9 +48,9 @@ end
 
 
 function limiter_type_to_int(params::ArmonParameters)
-    if     params.riemann_limiter isa NoLimiter       return 0
-    elseif params.riemann_limiter isa MinmodLimiter   return 1
-    elseif params.riemann_limiter isa SuperbeeLimiter return 2
+    if     params.riemann_limiter isa Armon.NoLimiter       return 0
+    elseif params.riemann_limiter isa Armon.MinmodLimiter   return 1
+    elseif params.riemann_limiter isa Armon.SuperbeeLimiter return 2
     else
         solver_error(:config, "This limiter is not recognized by armon_cpp")
     end
@@ -61,11 +58,11 @@ end
 
 
 function test_case_to_int(params::ArmonParameters)
-    if     params.test isa Sod       return 0
-    elseif params.test isa Sod_y     return 1
-    elseif params.test isa Sod_circ  return 2
-    elseif params.test isa Bizarrium return 3
-    elseif params.test isa Sedov     return 4
+    if     params.test isa Armon.Sod       return 0
+    elseif params.test isa Armon.Sod_y     return 1
+    elseif params.test isa Armon.Sod_circ  return 2
+    elseif params.test isa Armon.Bizarrium return 3
+    elseif params.test isa Armon.Sedov     return 4
     else
         solver_error(:config, "This test case is not recognized by armon_cpp")
     end
@@ -210,8 +207,10 @@ end
 # Custom reduction kernels
 #
 
+# TODO: fix
+
 @generated function Armon.dtCFL_kernel(
-    params::ArmonParameters{T, <:Kokkos.ExecutionSpace}, data::ArmonData{V}, range, dx, dy
+    params::ArmonParameters{T, <:Kokkos.ExecutionSpace}, data::BlockGrid{V}, range, dx, dy
 ) where {T, V <: AbstractArray{T}}
     quote
         cpp_range = params.backend_options.range
@@ -233,7 +232,7 @@ end
 
 
 @generated function Armon.conservation_vars_kernel(
-    params::ArmonParameters{T, <:Kokkos.ExecutionSpace}, data::ArmonData{V}, range
+    params::ArmonParameters{T, <:Kokkos.ExecutionSpace}, data::BlockGrid{V}, range
 ) where {T, V <: Kokkos.View{T}}
     quote
         cpp_range = params.backend_options.range
@@ -262,39 +261,16 @@ end
 # Copies
 #
 
-function Armon.copy_to_send_buffer!(data::ArmonDualData{D, H, B, <:Kokkos.ExecutionSpace},
-    array::D, buffer::B
-) where {D, H, B <: AbstractArray}
-    D == B && return  # Buffers are already on the device
-    array_data = Kokkos.subview(array, 1:length(buffer))
-    Kokkos.deep_copy(Armon.device_type(data), buffer, array_data)
-end
+function Base.copyto!(dst_blk::LocalTaskBlock{A, Size}, src_blk::LocalTaskBlock{B, Size}) where {A <: Kokkos.View, B <: Kokkos.View, Size}
+    if state(dst_blk) != Done || state(src_blk) != Done
+        error("Both destination and source blocks must be `Done` to copy")
+    elseif block_size(dst_blk) != block_size(src_blk)
+        error("Destination and source blocks have different sizes: $(block_size(dst_blk)) != $(block_size(src_blk))")
+    end
 
-
-function Armon.copy_from_recv_buffer!(data::ArmonDualData{D, H, B, <:Kokkos.ExecutionSpace},
-    array::D, buffer::B
-) where {D, H, B <: AbstractArray}
-    D == B && return  # Buffers are already on the device
-    array_data = Kokkos.subview(array, 1:length(buffer))
-    Kokkos.deep_copy(Armon.device_type(data), array_data, buffer)
-end
-
-
-function Armon.get_send_comm_array(data::ArmonDualData{D, H, D, <:Kokkos.ExecutionSpace},
-    side::Side
-) where {D, H}
-    # Here only for method disambiguation
-    return Base.invoke(Armon.get_send_comm_array, Tuple{ArmonDualData{D, H, D, <:Any}, Side}, data, side)
-end
-
-
-function Armon.get_send_comm_array(data::ArmonDualData{D, H, B, <:Kokkos.ExecutionSpace},
-    side::Side
-) where {D, H, B}
-    # Kokkos functions (like deep_copy, etc...) called on the comm array require an actual
-    # Kokkos.View, not a view.
-    array_view = Base.invoke(Armon.get_send_comm_array, Tuple{ArmonDualData{D, H, D, <:Any}, Side}, data, side)
-    return Kokkos.subview(parent(array_view), parentindices(array_view))
+    for (dst_var, src_var) in zip(main_vars(dst_blk), main_vars(src_blk))
+        Kokkos.deep_copy(Armon.device_type(dst_blk), dst_var, src_var)
+    end
 end
 
 end

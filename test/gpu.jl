@@ -32,12 +32,6 @@ end
                 cmp_gpu_with_reference_for(type, test, :CUDA)
             end
         end
-
-        @testset "Async" begin
-            @testset "$test" for test in (:Sod, :Sod_y, :Sod_circ, :Bizarrium, :Sedov)
-                cmp_gpu_with_reference_for(Float64, test, :CUDA; async_comms=true)
-            end
-        end
     end
 
     AMDGPU.has_rocm_gpu() && @testset "ROCm" begin
@@ -45,12 +39,6 @@ end
             @testset "$test with $type" for type in (Float32, Float64),
                                             test in (:Sod, :Sod_y, :Sod_circ, :Bizarrium, :Sedov)
                 cmp_gpu_with_reference_for(type, test, :ROCM)
-            end
-        end
-
-        @testset "Async" begin
-            @testset "$test" for test in (:Sod, :Sod_y, :Sod_circ, :Bizarrium, :Sedov)
-                cmp_gpu_with_reference_for(Float64, test, :ROCM; async_comms=true)
             end
         end
     end

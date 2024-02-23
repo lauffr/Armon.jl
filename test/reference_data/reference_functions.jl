@@ -1,7 +1,7 @@
 
 using Printf
 using Test
-import Armon: ArmonData, TestCase, init_test, time_loop, device_to_host!
+import Armon: TestCase
 
 
 function get_reference_params(test::Symbol, type::Type; overriden_options...)
@@ -12,7 +12,7 @@ function get_reference_params(test::Symbol, type::Type; overriden_options...)
         :cfl => 0,
         :maxcycle => 1000, :maxtime => 0,  # Run until reaching the default maximum time of the test by default
         :silent => 5, :write_output => false, :measure_time => false,
-        :use_MPI => false, :async_comms => false
+        :use_MPI => false
     )
     merge!(ref_options, overriden_options)
     ArmonParameters(; ref_options...)
@@ -21,9 +21,9 @@ end
 
 function run_armon_reference(ref_params::ArmonParameters)
     data = BlockGrid(ref_params)
-    init_test(ref_params, data)
-    dt, cycles, _ = time_loop(ref_params, data)
-    device_to_host!(data)
+    Armon.init_test(ref_params, data)
+    dt, cycles, _ = Armon.time_loop(ref_params, data)
+    Armon.device_to_host!(data)
     return dt, cycles, data
 end
 

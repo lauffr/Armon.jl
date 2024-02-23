@@ -101,7 +101,7 @@ function get_performance_params(test::Symbol, type::Type, device_type::Symbol, n
             nghost=5, nx=n, ny=n, 
             maxcycle=50, maxtime=1,
             silent=5, write_output=false, measure_time=false,
-            use_MPI=false, async_comms=false,
+            use_MPI=false,
             use_threading=true, use_simd=true, use_gpu=false)
     elseif device_type == :GPU
         gpu_type = get_available_gpu()
@@ -111,7 +111,7 @@ function get_performance_params(test::Symbol, type::Type, device_type::Symbol, n
             nghost=5, nx=n, ny=n, 
             maxcycle=50, maxtime=1,
             silent=5, write_output=false, measure_time=false,
-            use_MPI=false, async_comms=false,
+            use_MPI=false,
             use_gpu=true, device=gpu_type, block_size=128)
     end
 end

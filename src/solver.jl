@@ -43,12 +43,6 @@ function solver_cycle(params::ArmonParameters, data::BlockGrid)
         step_checkpoint(params, data, "EOS_init") && return true
     end
 
-    if params.async_comms && !haskey(params.tasks_storage, :lb)
-        params.tasks_storage[:lb] = nothing
-        params.tasks_storage[:rt] = nothing
-        params.tasks_storage[:inner] = nothing
-    end
-
     (@section "time_step" time_step(params, data)) && return true
     @checkpoint("time_step") && return true
 
