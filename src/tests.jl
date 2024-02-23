@@ -27,7 +27,7 @@ test_from_name(::Val{:Sedov})     = Sedov
 test_from_name(::Val{s}) where s = solver_error(:config, "Unknown test case: '$s'")
 test_from_name(s::Symbol) = test_from_name(Val(s))
 
-test_name(::Test) where {Test <: TestCase} = Test.name.name
+test_name(::Test) where {Test <: TestCase} = nameof(Test)
 
 default_domain_size(::Type{<:TestCase}) = (1, 1)
 default_domain_size(::Type{Sedov}) = (2, 2)
@@ -43,7 +43,7 @@ default_max_time(::Union{Sod, Sod_y, Sod_circ}) = 0.20
 default_max_time(::Bizarrium) = 80e-6
 default_max_time(::Sedov) = 1.0
 
-specific_heat_ratio(::Union{Sod, Sod_y, Sod_circ, Bizarrium, Sedov}) = 7/5
+specific_heat_ratio(::TestCase) = 7/5
 
 is_conservative(::TestCase) = true
 is_conservative(::Bizarrium) = false
@@ -78,14 +78,6 @@ struct InitTestParamsTwoState{T}
     ) where {T}
         new{T}(high_ρ, low_ρ, high_E, low_E, high_u, low_u, high_v, low_v)
     end
-end
-
-
-struct InitTestParams{T}
-    ρ::T
-    E::T
-    u::T
-    v::T
 end
 
 
@@ -215,5 +207,27 @@ function boundary_condition(::Sedov)
         right  = FreeFlow,
         bottom = FreeFlow,
         top    = FreeFlow
+    )
+end
+
+#
+# DebugIndexes
+#
+
+struct DebugIndexes <: TestCase end
+
+test_from_name(::Val{:DebugIndexes}) = DebugIndexes
+
+default_CFL(::DebugIndexes) = 0
+default_max_time(::DebugIndexes) = 0
+
+Base.show(io::IO, ::DebugIndexes) = print(io, "DebugIndexes")
+
+function boundary_condition(::DebugIndexes)
+    return Boundaries(
+        left   = Dirichlet,
+        right  = Dirichlet,
+        bottom = Dirichlet,
+        top    = Dirichlet
     )
 end

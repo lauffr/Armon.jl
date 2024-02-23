@@ -136,8 +136,8 @@ end
         (0, (100, 100), (32, 32)),  # 0 ghosts
     )
         params = ArmonParameters(;
-            nghost=5, N, block_size=B,
-            debug_indexes=true, use_MPI=false, data_type=Float64
+            test=:DebugIndexes, nghost=5, N, block_size=B,
+            use_MPI=false, data_type=Float64
         )
         params.nghost = g  # We must do this after the constructor to avoid checks with the schemes
         Armon.update_steps_ranges(params)

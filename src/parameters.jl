@@ -152,6 +152,7 @@ Data type for all variables. Should be an `AbstractFloat`.
  - `:Sod_circ`: Circular Sod shock tube test (centered in the domain)
  - `:Bizarrium`: Bizarrium test, similar to the Sod shock tube but with a special equation of state
  - `:Sedov`: Sedov blast-wave test (centered in the domain, reaches the border at `t=1` by default)
+ - `:DebugIndexes`: Set all variables to their index in the global domain. Debug only.
 
 
     cfl = 0., maxtime = 0., maxcycle = 500_000
@@ -159,11 +160,6 @@ Data type for all variables. Should be an `AbstractFloat`.
 `cfl` defaults to the test's default value, same for `maxtime`.
 The solver stops when `t` reaches `maxtime` or `maxcycle` iterations were done (`maxcycle=0` stops
 after initialization).
-
-
-    debug_indexes = false
-
-`debug_indexes=true` sets all variables to their index in the array. Use with `maxcycle=0`.
 
 
 ## Output
@@ -302,7 +298,6 @@ mutable struct ArmonParameters{Flt_T, Device, DeviceParams}
     compare::Bool
     is_ref::Bool
     comparison_tolerance::Float64
-    debug_indexes::Bool
     check_result::Bool
     initial_mass::Flt_T
     initial_energy::Flt_T
@@ -595,7 +590,7 @@ function init_output(params::ArmonParameters{T};
     silent = 0, output_dir = ".", output_file = "output",
     write_output = false, write_ghosts = false, write_slices = false, output_precision = nothing,
     animation_step = 0,
-    compare = false, is_ref = false, comparison_tolerance = 1e-10, debug_indexes = false,
+    compare = false, is_ref = false, comparison_tolerance = 1e-10,
     check_result = false, return_data = false,
     options...
 ) where {T}
@@ -614,7 +609,6 @@ function init_output(params::ArmonParameters{T};
     params.compare = compare
     params.is_ref = is_ref
     params.comparison_tolerance = comparison_tolerance
-    params.debug_indexes = debug_indexes
     params.check_result = check_result
     params.return_data = return_data
 

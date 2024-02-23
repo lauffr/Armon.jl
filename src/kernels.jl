@@ -220,24 +220,46 @@ end
 end
 
 
+@kernel_function function init_vars(
+    test_case::TwoStateTestCase, test_params::InitTestParamsTwoState, X::NTuple,
+    i, ρ::V, E::V, u::V, v::V, _::V, _::V, _::V
+) where {V}
+    if test_region_high(X, test_case)
+        ρ[i] = test_params.high_ρ
+        E[i] = test_params.high_E
+        u[i] = test_params.high_u
+        v[i] = test_params.high_v
+    else
+        ρ[i] = test_params.low_ρ
+        E[i] = test_params.low_E
+        u[i] = test_params.low_u
+        v[i] = test_params.low_v
+    end
+end
+
+
+@kernel_function function init_vars(
+    ::DebugIndexes, i, global_i, ρ::V, E::V, u::V, v::V, p::V, c::V, g::V
+) where {V}
+    ρ[i] = global_i
+    E[i] = global_i
+    u[i] = global_i
+    v[i] = global_i
+    p[i] = global_i
+    c[i] = global_i
+    g[i] = global_i
+end
+
+
 @generic_kernel function init_test(
-    global_grid::NTuple{2, Int},
-    cart_coords::NTuple{2, Int}, N::NTuple{2, Int},
-    block_pos::NTuple{2, Int}, static_bsize::NTuple{2, Int}, bsize::BSize,
-    domain_size::NTuple{2, T}, origin::NTuple{2, T},
-    x::V, y::V, ρ::V, E::V, u::V, v::V,
-    mask::V, p::V, c::V, g::V, uˢ::V, pˢ::V,
-    test_case::Test, debug_indexes::Bool
+    global_pos::NTuple{2, Int}, N::NTuple{2, Int}, bsize::BSize,
+    origin::NTuple{2, T}, ΔX::NTuple{2, T},
+    x::V, y::V, mask::V, ρ::V, E::V, u::V, v::V, p::V, c::V, g::V,
+    test_case::Test
 ) where {T, V <: AbstractArray{T}, Test <: TestCase, BSize <: BlockSize}
     @kernel_init begin
-        # Position of the origin of this block
-        pos = cart_coords .* N .+ (block_pos .- 1) .* static_bsize
-
         if Test <: TwoStateTestCase
-            (; high_ρ::T, low_ρ::T,
-               high_E::T, low_E::T,
-               high_u::T, low_u::T,
-               high_v::T, low_v::T) = init_test_params(test_case, T)
+            test_init_params = init_test_params(test_case, T)
         end
     end
 
@@ -245,52 +267,25 @@ end
     I = position(bsize, i)  # Position in the block's real cells
 
     # Index in the global grid (0-indexed)
-    gI = I .+ pos .- 1
+    gI = I .+ global_pos .- 1
 
     # Position in the global grid
-    (x[i], y[i]) = gI ./ global_grid .* domain_size .+ origin
-
-    # Middle point of the cell
-    mid = (x[i], y[i]) .+ domain_size ./ (2 .* global_grid)
-
-    if debug_indexes
-        global_i = sum(gI .* Base.size_to_strides(1, N...)) + 1
-        ρ[i] = global_i
-        E[i] = global_i
-        u[i] = global_i
-        v[i] = global_i
-    else
-        if Test <: TwoStateTestCase
-            if test_region_high(mid, test_case)
-                ρ[i] = high_ρ
-                E[i] = high_E
-                u[i] = high_u
-                v[i] = high_v
-            else
-                ρ[i] = low_ρ
-                E[i] = low_E
-                u[i] = low_u
-                v[i] = low_v
-            end
-        else
-            init_vals = init_test_params(mid, test_case)::InitTestParams{T}
-            ρ[i] = init_vals.ρ
-            E[i] = init_vals.E
-            u[i] = init_vals.u
-            v[i] = init_vals.v
-        end
-    end
+    (x[i], y[i]) = gI .* ΔX .+ origin
 
     # Set the domain mask to 1 if the cell is real or 0 otherwise
     mask[i] = is_ghost(bsize, i) ? 0 : 1
 
-    # TODO: remove this as it should be unnecessary now
-    # Set to zero to make sure no non-initialized values changes the result
-    p[i] = 0
-    c[i] = 1  # Set to 1 as a max speed of 0 will create NaNs
-    g[i] = 0
-    uˢ[i] = 0
-    pˢ[i] = 0
+    # Middle point of the cell
+    mid = (x[i], y[i]) .+ ΔX ./ 2
+
+    if Test <: TwoStateTestCase
+        init_vars(test_case, test_init_params, mid, i, ρ, E, u, v, p, c, g)
+    elseif Test <: DebugIndexes
+        global_i = sum(gI .* Base.size_to_strides(1, N...)) + 1
+        init_vars(test_case, i, global_i, ρ, E, u, v, p, c, g)
+    else
+        init_vars(test_case, mid, i, ρ, E, u, v, p, c, g)
+    end
 end
 
 #
@@ -346,8 +341,15 @@ end
 
 function init_test(params::ArmonParameters, blk::LocalTaskBlock)
     blk_domain = block_domain_range(blk.size, params.steps_ranges.full_domain)
+
+    # Position of the origin of this block
     real_static_bsize = params.block_size .- 2*params.nghost
-    init_test(params, blk, blk_domain, Tuple(blk.pos), real_static_bsize, blk.size, params.test)
+    blk_global_pos = params.cart_coords .* params.N .+ (Tuple(blk.pos) .- 1) .* real_static_bsize
+
+    # Cell dimensions
+    ΔX = params.domain_size ./ params.global_grid
+
+    init_test(params, blk, blk_domain, blk_global_pos, blk.size, ΔX, params.test)
 end
 
 
