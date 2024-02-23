@@ -75,7 +75,7 @@ function uninit_vars_propagation(test, type; options...)
     vars = setdiff(Armon.main_vars(), (:x, :y, :mask))
     for blk in Armon.host_blocks(data)
         for i in 1:prod(Armon.block_size(blk.size))
-            blk.mask[i] == 1 && continue  # only set `big_val` to ghost cells
+            !Armon.is_ghost(blk.size, i) && continue  # only set `big_val` to ghost cells
             for var in vars
                 getfield(blk, var)[i] = big_val
             end
@@ -85,7 +85,17 @@ function uninit_vars_propagation(test, type; options...)
     dt, cycles, _ = Armon.time_loop(ref_params, data)
 
     ref_data = BlockGrid(ref_params)
-    differences_count, max_diff = compare_with_reference_data(ref_params, dt, cycles, data, ref_data)
+    differences_count, max_diff = compare_with_reference_data(
+        ref_params, dt, cycles, data, ref_data;
+        save_diff=WRITE_FAILED
+    )
+
+    if differences_count > 0 && WRITE_FAILED
+        file_name = "test_$(Armon.test_name(ref_params.test))_$(data_type(ref_params))_uninit_vars"
+        open(file_name, "w") do file
+            write_reference_data(ref_params, file, data, dt, cycles; more_vars=(:work_1,))
+        end
+    end
 
     @test differences_count == 0
     @test max_diff == 0

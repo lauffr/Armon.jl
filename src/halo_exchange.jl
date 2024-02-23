@@ -48,13 +48,13 @@ end
         # Real cells of 1 to ghosts of 2
         # TODO: KernelAbstractions.Extras.@unroll ??
         for v in 1:N
-            vars₂[v][ig₂ + j₂] = vars₁[v][i₁ + j₁]
+            vars₂[v][ig₂ - j₂] = vars₁[v][i₁ + j₁]
         end
 
         # Real cells of 2 to ghosts of 1
         # TODO: KernelAbstractions.Extras.@unroll ??
         for v in 1:N
-            vars₁[v][ig₁ + j₁] = vars₂[v][i₂ + j₂]
+            vars₁[v][ig₁ - j₁] = vars₂[v][i₂ + j₂]
         end
     end
 end
@@ -68,10 +68,10 @@ end
     @kernel_init begin
         side₂ = opposite_of(side₁)
 
-        # Offsets to first ghost cell
+        # Offsets going towards the ghost cells
         sg  = stride_along(bsize, axis)
         sg₁ = ifelse(side₁ in first_sides(), -sg, sg)
-        sg₂ = ifelse(side₂ in first_sides(), -sg, sg)
+        sg₂ = -sg₁
 
         # Convertion from `i₁` to `i₂`, exploiting the fact that both blocks have the same size
         d₂ = stride_along(bsize, axis) * (real_size_along(bsize, axis) - 1)
@@ -81,8 +81,13 @@ end
     i₁ = @index_2D_lin()
     i₂ = i₁ + d₂
 
-    ig₁ = i₁ + sg₁
-    ig₂ = i₂ + sg₂
+    # `ig` is the position of the ghost cell at the border of the block
+    ig₁ = i₁ + sg₁ * ghosts(bsize)
+    ig₂ = i₂ + sg₂ * ghosts(bsize)
+
+    # `i` is the position of the farthest real cell from the ghost border of the block
+    i₁ -= sg₁ * (ghosts(bsize) - 1)
+    i₂ -= sg₂ * (ghosts(bsize) - 1)
 
     vars_ghost_exchange(
         vars₁, i₁, ig₁, sg₁,
@@ -114,7 +119,7 @@ end
     @kernel_init begin
         side₂ = opposite_of(side₁)
 
-        # Offsets to first ghost cell
+        # Offsets going towards the ghost cells
         sg₁ = stride_along(bsize₁, axis)
         sg₂ = stride_along(bsize₂, axis)
         sg₁ = ifelse(side₁ in first_sides(), -sg₁, sg₁)
@@ -140,8 +145,13 @@ end
 
     i₂ = lin_position(bsize₂, I₂)
 
-    ig₁ = i₁ + sg₁
-    ig₂ = i₂ + sg₂
+    # `ig` is the position of the ghost cell at the border of the block
+    ig₁ = i₁ + sg₁ * ghosts(bsize₁)
+    ig₂ = i₂ + sg₂ * ghosts(bsize₁)
+
+    # `i` is the position of the farthest real cell from the ghost border of the block
+    i₁ -= sg₁ * (ghosts(bsize₁) - 1)
+    i₂ -= sg₂ * (ghosts(bsize₁) - 1)
 
     vars_ghost_exchange(
         vars₁, i₁, ig₁, sg₁,

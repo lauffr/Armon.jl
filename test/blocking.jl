@@ -75,7 +75,7 @@ end
                 I = (ii - g, ij - g)
                 pos_ok     += Armon.position(bsize, i) == I
                 lin_pos_ok += Armon.lin_position(bsize, I) == i
-                ghost_ok   += Armon.is_ghost(bsize, i) == any(I .≤ 0) || any(I .> Armon.real_block_size(bsize))
+                ghost_ok   += Armon.is_ghost(bsize, i) == (any(I .≤ 0) || any(I .> Armon.real_block_size(bsize)))
             end
             @test pos_ok     == length(all_cells)
             @test lin_pos_ok == length(all_cells)
@@ -93,7 +93,7 @@ end
                 I = (ii, ij)
                 pos_ok     += Armon.position(bsize, i) == I
                 lin_pos_ok += Armon.lin_position(bsize, I) == i
-                ghost_ok   += Armon.is_ghost(bsize, i) == 0
+                ghost_ok   += !Armon.is_ghost(bsize, i)
             end
             @test pos_ok     == length(real_cells)
             @test lin_pos_ok == length(real_cells)

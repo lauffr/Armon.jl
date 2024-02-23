@@ -244,14 +244,17 @@ end
     i = @index_2D_lin()
     I = position(bsize, i)  # Position in the block's real cells
 
+    # Index in the global grid (0-indexed)
+    gI = I .+ pos .- 1
+
     # Position in the global grid
-    (x[i], y[i]) = (I .+ pos) ./ global_grid .* domain_size .+ origin
+    (x[i], y[i]) = gI ./ global_grid .* domain_size .+ origin
 
     # Middle point of the cell
     mid = (x[i], y[i]) .+ domain_size ./ (2 .* global_grid)
 
     if debug_indexes
-        global_i = sum((I .+ pos .- 1) .* Base.size_to_strides(1, sub_domain_size...)) + 1
+        global_i = sum(gI .* Base.size_to_strides(1, sub_domain_size...)) + 1
         ρ[i] = global_i
         E[i] = global_i
         u[i] = global_i
@@ -279,7 +282,7 @@ end
     end
 
     # Set the domain mask to 1 if the cell is real or 0 otherwise
-    mask[i] = !Bool(is_ghost(bsize, i))
+    mask[i] = is_ghost(bsize, i) ? 0 : 1
 
     # TODO: remove this as it should be unnecessary now
     # Set to zero to make sure no non-initialized values changes the result
@@ -473,7 +476,7 @@ end
     u::V, v::V, c::V, res::V, bsize::BlockSize, dx::T, dy::T
 ) where {T, V <: AbstractArray{T}}
     i = @index_2D_lin()
-    mask = is_ghost(bsize, i)
+    mask = T(!is_ghost(bsize, i))
     res[i] = dtCFL_kernel_reduction(u[i], v[i], c[i], mask, dx, dy)
 end
 
@@ -617,7 +620,7 @@ end
     ρ::V, E::V, res_mass::V, res_energy::V, bsize::BlockSize
 ) where {V}
     i = @index_2D_lin()
-    mask = is_ghost(bsize, i)
+    mask = eltype(V)(!is_ghost(bsize, i))
     (res_mass[i], res_energy[i]) = conservation_vars_kernel_reduction(ρ[i], E[i], mask)
 end
 

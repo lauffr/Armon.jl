@@ -188,12 +188,11 @@ real_size_along(bsize::BlockSize, side::Side) = real_size_along(bsize, axis_of(s
 """
     is_ghost(bsize::BlockSize, i, o=0)
 
-`0` if the `i`-th cell of the block is a ghost cell, `1` otherwise.
+`true` if the `i`-th cell of the block is a ghost cell, `false` otherwise.
 
 `o` would be a "ring" index: `o == 1` excludes the first ring of ghost cells, etc.
 """
-is_ghost(bsize::BlockSize, i, o=0) =
-    in_grid(1 - o, position(bsize, i), real_block_size(bsize) .+ o) ? 0 : 1
+is_ghost(bsize::BlockSize, i, o=0) = !in_grid(1 - o, position(bsize, i), real_block_size(bsize) .+ o)
 
 
 """

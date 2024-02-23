@@ -180,3 +180,7 @@ macro reuse_tls(storage, expr)
         $task_var
     end)
 end
+
+
+disp_blk(blk, var) = reshape(getfield(blk, var), block_size(blk))'
+disp_real_blk(blk, var) = view(disp_blk(blk, var)', (.+).(Base.oneto.(real_block_size(blk.size)), ghosts(blk.size))...)'

@@ -34,7 +34,7 @@ function read_data_from_file(
 ) where {T}
     vars_to_read = tuple(saved_vars()..., more_vars...)
 
-    for (blk, row_range) in BlockRowIterator(grid; global_ghosts, all_ghosts, device_blocks=false)
+    for (blk, _, row_range) in BlockRowIterator(grid; global_ghosts, all_ghosts, device_blocks=false)
         vars = getfield.(Ref(blk), vars_to_read)
         for idx in row_range
             for var in vars[1:end-1]
@@ -80,6 +80,17 @@ function write_sub_domain_file(
 end
 
 
+function read_sub_domain_file!(
+    params::ArmonParameters, data::BlockGrid, file_name::String; options...
+)
+    output_file_path = build_file_path(params, file_name)
+    open(output_file_path, "r") do file
+        global_ghosts = params.write_ghosts
+        read_data_from_file(params, data, file; global_ghosts, options...)
+    end
+end
+
+
 function write_time_step_file(params::ArmonParameters, file_name::String)
     file_path = build_file_path(params, file_name)
 
@@ -115,7 +126,7 @@ function compare_block(
         our_var = getfield(our_blk, var)
 
         diff_mask = (!isapprox).(ref_var, our_var; rtol=params.comparison_tolerance)
-        !params.write_ghosts && (diff_mask .*= is_ghost.(Ref(our_blk.size), 1:prod(block_size(our_blk))))
+        !params.write_ghosts && (diff_mask .*= (!is_ghost).(Ref(our_blk.size), 1:prod(block_size(our_blk))))
 
         diff_count = sum(diff_mask)
         diff_count == 0 && continue
@@ -134,8 +145,8 @@ function compare_block(
                 diff_ulp = val_diff / eps(ref_var[idx])
                 abs(diff_ulp) > 1e10 && (diff_ulp = Inf)
 
-                pos_str = join(map(i -> @sprintf("%3d"), I), ',')
-                @printf("   - %5d (%s): %10.5g ≢ %10.5g (%11.5g, ulp: %8g)\n",
+                pos_str = join((@sprintf("%3d", i) for i in I), ',')
+                @printf("   - %5d (%s): %12.5g ≢ %12.5g (%12.5g, ulp: %8g)\n",
                     idx, pos_str, ref_var[idx], our_var[idx], val_diff, diff_ulp)
             end
         else
@@ -195,9 +206,11 @@ function step_checkpoint(params::ArmonParameters, grid::BlockGrid, step_label::S
     else
         if step_label == "time_step"
             ref_dt = read_time_step_file(params, step_file_name)
-            different = isapprox(ref_dt, params.curr_cycle_dt; rtol=params.comparison_tolerance)
-            @printf("Time step difference: ref Δt = %.18f, Δt = %.18f, diff = %.18f\n",
-                    ref_dt, params.curr_cycle_dt, ref_dt - params.curr_cycle_dt)
+            different = !isapprox(ref_dt, params.curr_cycle_dt; rtol=params.comparison_tolerance)
+            if different
+                @printf("Time step difference: ref Δt = %.18f, Δt = %.18f, diff = %.18f\n",
+                        ref_dt, params.curr_cycle_dt, ref_dt - params.curr_cycle_dt)
+            end
         else
             different = compare_with_file(params, grid, step_file_name, step_label)
         end
