@@ -2,7 +2,7 @@
 
 @testset "BlockGrid" begin
     @testset "$block_size" for block_size in ((32, 32), (16, 48), (110, 110))
-        ref_params = get_reference_params(:Sod, Float64; nx=100, ny=100, block_size)
+        ref_params = get_reference_params(:Sod, Float64; N=(100, 100), block_size)
         grid = Armon.BlockGrid(ref_params)
 
         @testset "Neighbours" begin
@@ -136,7 +136,7 @@ end
         (0, (100, 100), (32, 32)),  # 0 ghosts
     )
         params = ArmonParameters(;
-            nghost=5, nx=N[1], ny=N[2], block_size=B,
+            nghost=5, N, block_size=B,
             debug_indexes=true, use_MPI=false, data_type=Float64
         )
         params.nghost = g  # We must do this after the constructor to avoid checks with the schemes

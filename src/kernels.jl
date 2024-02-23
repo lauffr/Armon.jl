@@ -222,7 +222,7 @@ end
 
 @generic_kernel function init_test(
     global_grid::NTuple{2, Int},
-    cart_coords::NTuple{2, Int}, sub_domain_size::NTuple{2, Int},
+    cart_coords::NTuple{2, Int}, N::NTuple{2, Int},
     block_pos::NTuple{2, Int}, static_bsize::NTuple{2, Int}, bsize::BSize,
     domain_size::NTuple{2, T}, origin::NTuple{2, T},
     x::V, y::V, ρ::V, E::V, u::V, v::V,
@@ -231,7 +231,7 @@ end
 ) where {T, V <: AbstractArray{T}, Test <: TestCase, BSize <: BlockSize}
     @kernel_init begin
         # Position of the origin of this block
-        pos = cart_coords .* sub_domain_size .+ (block_pos .- 1) .* static_bsize
+        pos = cart_coords .* N .+ (block_pos .- 1) .* static_bsize
 
         if Test <: TwoStateTestCase
             (; high_ρ::T, low_ρ::T,
@@ -254,7 +254,7 @@ end
     mid = (x[i], y[i]) .+ domain_size ./ (2 .* global_grid)
 
     if debug_indexes
-        global_i = sum(gI .* Base.size_to_strides(1, sub_domain_size...)) + 1
+        global_i = sum(gI .* Base.size_to_strides(1, N...)) + 1
         ρ[i] = global_i
         E[i] = global_i
         u[i] = global_i

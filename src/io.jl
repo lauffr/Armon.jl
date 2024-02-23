@@ -47,17 +47,15 @@ end
 
 
 function build_file_path(params::ArmonParameters, file_name::String)
-    (; output_dir, use_MPI, is_root, cart_coords) = params
+    file_path = joinpath(params.output_dir, file_name)
 
-    file_path = joinpath(output_dir, file_name)
-
-    if is_root && !isdir(output_dir)
-        mkpath(output_dir)
+    if params.is_root && !isdir(params.output_dir)
+        mkpath(params.output_dir)
     end
 
-    if use_MPI
-        (cx, cy) = cart_coords
-        params.use_MPI && (file_path *= "_$(cx)x$(cy)")
+    if params.use_MPI
+        coords_str = join(params.cart_coords, '×')
+        params.use_MPI && (file_path *= "_$coords_str")
     end
 
     return file_path

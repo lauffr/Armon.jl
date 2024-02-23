@@ -38,7 +38,7 @@ function read_sub_domain_from_global_domain_file!(params::ArmonParameters, data:
 
     (g_nx, g_ny) = params.global_grid
     (cx, cy) = params.cart_coords
-    (; nx, ny, nghost) = params
+    (; nghost) = params
 
     # Ranges of the global domain
     global_cols = 1:g_nx
@@ -118,17 +118,17 @@ function ref_data_for_sub_domain(params::ArmonParameters{T}) where T
 end
 
 
-function ref_params_for_sub_domain(test::Symbol, type::Type, px, py; overriden_options...)
+function ref_params_for_sub_domain(test::Symbol, type::Type, P; overriden_options...)
     ref_options = Dict{Symbol, Any}(
-        :use_MPI => true, :px => px, :py => py, :reorder_grid => true
+        :use_MPI => true, :P => P, :reorder_grid => true
     )
     merge!(ref_options, overriden_options)
     return get_reference_params(test, type; ref_options...)
 end
 
 
-function set_comm_for_grid(px, py)
-    new_grid_size = px * py
+function set_comm_for_grid(P)
+    new_grid_size = prod(P)
     global_rank = MPI.Comm_rank(MPI.COMM_WORLD)
     # Only the first `new_grid_size` ranks will be part of the new communicator
     in_grid = global_rank < new_grid_size
@@ -180,10 +180,10 @@ macro root_test(expr, kws...)
 end
 
 
-function test_neighbour_coords(px, py, proc_in_grid, global_comm)
+function test_neighbour_coords(P, proc_in_grid, global_comm)
     !proc_in_grid && return
 
-    ref_params = ref_params_for_sub_domain(:Sod, Float64, px, py; global_comm)
+    ref_params = ref_params_for_sub_domain(:Sod, Float64, P; global_comm)
     coords = ref_params.cart_coords
 
     for (coord, sides) in ((coords[1], Armon.sides_along(Armon.X_axis)), (coords[2], Armon.sides_along(Armon.Y_axis))), 
@@ -207,10 +207,10 @@ NX = 100
 NY = 100
 using Printf
 
-function dump_neighbours(px, py, proc_in_grid, global_comm)
+function dump_neighbours(P, proc_in_grid, global_comm)
     !proc_in_grid && return
 
-    ref_params = ref_params_for_sub_domain(:Sod, Float64, px, py; nx=NX, ny=NY, global_comm)
+    ref_params = ref_params_for_sub_domain(:Sod, Float64, P; N=(NX, NY), global_comm)
 
     coords = ref_params.cart_coords
 
@@ -247,7 +247,7 @@ function dump_neighbours(px, py, proc_in_grid, global_comm)
     end
 
     # Notify the next rank
-    if ref_params.rank < px*py-1
+    if ref_params.rank < prod(P)-1
         MPI.Send(true, ref_params.cart_comm; dest=ref_params.rank+1)
     end
 
@@ -277,10 +277,10 @@ function check_domain_idx(array, domain, val, my_rank, neighbour_rank)
 end
 
 
-function test_halo_exchange(px, py, proc_in_grid, global_comm)
+function test_halo_exchange(P, proc_in_grid, global_comm)
     !proc_in_grid && return
 
-    ref_params = ref_params_for_sub_domain(:Sod, Int64, px, py; nx=NX, ny=NY, global_comm)
+    ref_params = ref_params_for_sub_domain(:Sod, Int64, P; N=(NX, NY), global_comm)
     data = BlockGrid(ref_params)
     coords = ref_params.cart_coords
 
@@ -320,8 +320,8 @@ function test_halo_exchange(px, py, proc_in_grid, global_comm)
 end
 
 
-function test_reference(prefix, comm, test, type, px, py; kwargs...)
-    ref_params = ref_params_for_sub_domain(test, type, px, py; nx=NX, ny=NY, global_comm=comm, kwargs...)
+function test_reference(prefix, comm, test, type, P; kwargs...)
+    ref_params = ref_params_for_sub_domain(test, type, P; N=(NX, NY), global_comm=comm, kwargs...)
 
     diff_count, data, ref_data = try
         dt, cycles, data = run_armon_reference(ref_params)
@@ -344,8 +344,9 @@ function test_reference(prefix, comm, test, type, px, py; kwargs...)
         global_diff_count = MPI.Allreduce(diff_count, MPI.SUM, comm)
         if global_diff_count > 0 && diff_count >= 0
             prefix *= isempty(prefix) ? "" : "_"
-            Armon.write_sub_domain_file(ref_params, data, "$(prefix)test_$(test)_$(type)_$(px)x$(py)"; no_msg=true)
-            Armon.write_sub_domain_file(ref_params, ref_data, "$(prefix)ref_$(test)_$(type)_$(px)x$(py)"; no_msg=true)
+            p_str = join(P, '×')
+            Armon.write_sub_domain_file(ref_params, data, "$(prefix)test_$(test)_$(type)_$(p_str)"; no_msg=true)
+            Armon.write_sub_domain_file(ref_params, ref_data, "$(prefix)ref_$(test)_$(type)_$(p_str)"; no_msg=true)
         end
         println("[$(MPI.Comm_rank(comm))]: found $diff_count")
     end
@@ -371,24 +372,24 @@ domain_combinations = [
 total_proc_count = MPI.Comm_size(MPI.COMM_WORLD)
 
 @testset "MPI" begin
-    @testset "$(px)×$(py)" for (px, py) in domain_combinations
-        enough_processes = px * py ≤ total_proc_count
+    @testset "$(join(P, '×'))" for P in domain_combinations
+        enough_processes = prod(P) ≤ total_proc_count
         if enough_processes
-            is_root && @info "Testing with a $(px)×$(py) domain"
-            comm, proc_in_grid = set_comm_for_grid(px, py)
+            is_root && @info "Testing with a $P domain"
+            comm, proc_in_grid = set_comm_for_grid(P)
         else
-            is_root && @info "Not enough processes to test a $(px)×$(py) domain"
+            is_root && @info "Not enough processes to test a $P domain"
             comm, proc_in_grid = MPI.COMM_NULL, false
         end
 
-        # dump_neighbours(px, py, proc_in_grid, comm)
+        # dump_neighbours(P, proc_in_grid, comm)
 
         @testset "Neighbours" begin
-            test_neighbour_coords(px, py, proc_in_grid, comm)
+            test_neighbour_coords(P, proc_in_grid, comm)
         end
 
         @testset "Halo exchange" begin
-            test_halo_exchange(px, py, proc_in_grid, comm)
+            test_halo_exchange(P, proc_in_grid, comm)
         end
 
 
@@ -396,7 +397,7 @@ total_proc_count = MPI.Comm_size(MPI.COMM_WORLD)
             @testset "Reference" begin
                 @testset "$test with $type" for type in TEST_TYPES_MPI, test in TEST_CASES_MPI
                     @MPI_test comm begin
-                        test_reference("CPU", comm, test, type, px, py)
+                        test_reference("CPU", comm, test, type, P)
                     end skip=!enough_processes || !proc_in_grid
                 end
             end
@@ -404,9 +405,9 @@ total_proc_count = MPI.Comm_size(MPI.COMM_WORLD)
             @testset "Conservation" begin
                 @testset "$test" for test in (:Sod, :Sod_y, :Sod_circ)
                     if enough_processes && proc_in_grid
-                        ref_params = ref_params_for_sub_domain(test, Float64, px, py;
+                        ref_params = ref_params_for_sub_domain(test, Float64, P;
                             maxcycle=10000, maxtime=10000,
-                            nx=NX, ny=NY, global_comm=comm
+                            N=(NX, NY), global_comm=comm
                         )
 
                         data = BlockGrid(ref_params)
@@ -430,7 +431,7 @@ total_proc_count = MPI.Comm_size(MPI.COMM_WORLD)
         @testset "CUDA" begin
             @testset "$test with $type" for type in TEST_TYPES_MPI, test in TEST_CASES_MPI
                 @MPI_test comm begin
-                    test_reference("CUDA", comm, test, type, px, py; use_gpu=true, device=:CUDA)
+                    test_reference("CUDA", comm, test, type, P; use_gpu=true, device=:CUDA)
                 end skip=!TEST_CUDA_MPI ||!enough_processes || !proc_in_grid
             end
         end
@@ -439,7 +440,7 @@ total_proc_count = MPI.Comm_size(MPI.COMM_WORLD)
         @testset "ROCm" begin
             @testset "$test with $type" for type in TEST_TYPES_MPI, test in TEST_CASES_MPI
                 @MPI_test comm begin
-                    test_reference("ROCm", comm, test, type, px, py; use_gpu=true, device=:ROCM)
+                    test_reference("ROCm", comm, test, type, P; use_gpu=true, device=:ROCM)
                 end skip=!TEST_ROCM_MPI || !enough_processes || !proc_in_grid
             end
         end
@@ -448,7 +449,7 @@ total_proc_count = MPI.Comm_size(MPI.COMM_WORLD)
         @testset "Kokkos" begin
             @testset "$test with $type" for type in TEST_TYPES_MPI, test in TEST_CASES_MPI
                 @MPI_test comm begin
-                    test_reference("kokkos", comm, test, type, px, py; use_kokkos=true)
+                    test_reference("kokkos", comm, test, type, P; use_kokkos=true)
                 end skip=!TEST_KOKKOS_MPI || !enough_processes || !proc_in_grid
             end
         end

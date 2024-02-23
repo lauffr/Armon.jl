@@ -38,7 +38,7 @@ end
 
 function BlockGrid(params::ArmonParameters{T}) where {T}
     grid_size, static_sized_grid, remainder_block_size = grid_dimensions(params)
-    cell_size = (params.nx, params.ny)
+    cell_size = params.N
     static_sized_block_count = prod(static_sized_grid)
     dyn_sized_block_count = prod(grid_size) - static_sized_block_count
 
@@ -188,7 +188,7 @@ function BlockGrid(params::ArmonParameters{T}) where {T}
 end
 
 
-grid_dimensions(params::ArmonParameters) = grid_dimensions(params.block_size, (params.nx, params.ny), params.nghost)
+grid_dimensions(params::ArmonParameters) = grid_dimensions(params.block_size, params.N, params.nghost)
 
 function grid_dimensions(block_size::NTuple{D, Int}, domain_size::NTuple{D, Int}, ghost::Int) where {D}
     # `block_size` includes the number of ghost cells, while `domain_size` is in real cells.
@@ -366,7 +366,7 @@ function memory_required(params::ArmonParameters{T}) where {T}
     buffer_array = params.gpu_aware ? device_array : host_array
 
     arrays_byte_count, MPI_buffer_byte_count, host_overhead = memory_required(
-        (params.nx, params.ny), params.block_size, params.nghost,
+        params.N, params.block_size, params.nghost,
         device_array, host_array, buffer_array
     )
 

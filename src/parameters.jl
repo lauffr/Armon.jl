@@ -27,9 +27,9 @@ Device to use. Supported values:
  - `:CPU`: `KernelAbstractions.jl` CPU multithreading (using the standard `Threads.jl`)
 
 
-    use_MPI = true, px = 1, py = 1, reorder_grid = true, global_comm = nothing
+    use_MPI = true, P = (1, 1), reorder_grid = true, global_comm = nothing
 
-MPI config. The MPI domain will be a `px × py` process grid.
+MPI config. The MPI domain will be a process grid of size `P`.
 `global_comm` is the global communicator to use, defaults to `MPI.COMM_WORLD`.
 `reorder_grid` is passed to `MPI.Cart_create`.
 
@@ -117,9 +117,9 @@ Axis splitting to use:
  - `:Y_only`
 
 
-    nx = 10, ny = 10
+    N = (10, 10)
 
-Number of cells of the global domain in the `x` and `y` axes respectively.
+Number of cells of the global domain in each axes.
 
 
     nghost = 2
@@ -137,14 +137,9 @@ If `dt_on_even_cycles=true` then then time step is only updated at even cycles (
 even).
 
 
-    ieee_bits = 64
+    data_type = Float64
 
-Main data type. `32` for `Float32`, `64` for `Float64`.
-
-
-    data_type = nothing
-
-Takes precedence over `ieee_bits` if different than `nothing`.
+Data type for all variables. Should be an `AbstractFloat`.
 
 
 ## Test case and domain
@@ -237,9 +232,7 @@ mutable struct ArmonParameters{Flt_T, Device, DeviceParams}
 
     # Domain parameters
     nghost::Int
-    nx::Int
-    ny::Int
-    sub_domain_size::NTuple{2, Int}
+    N::NTuple{2, Int}
     dx::Flt_T
     domain_size::NTuple{2, Flt_T}
     origin::NTuple{2, Flt_T}
@@ -301,7 +294,7 @@ mutable struct ArmonParameters{Flt_T, Device, DeviceParams}
     cart_comm::MPI.Comm
     cart_coords::NTuple{2, Int}  # Coordinates of this process in the cartesian grid
     neighbours::Dict{Side, Int}  # Ranks of the neighbours of this process
-    global_grid::NTuple{2, Int}  # Dimensions (nx, ny) of the global grid
+    global_grid::NTuple{2, Int}  # Dimensions of the global grid
     reorder_grid::Bool
     gpu_aware::Bool
 
@@ -314,18 +307,11 @@ mutable struct ArmonParameters{Flt_T, Device, DeviceParams}
     initial_mass::Flt_T
     initial_energy::Flt_T
 
-    function ArmonParameters(; data_type = nothing, ieee_bits = 64, nx = 10, ny = 10, options...)
-        if data_type === nothing
-            flt_type = (ieee_bits == 64) ? Float64 : Float32
-        else
-            flt_type = data_type
-        end
+    function ArmonParameters(; data_type = Float64, N = (10, 10), options...)
         device, options = get_device(; options...)
 
-        params = new{flt_type, typeof(device), Any}()
-        params.nx = nx
-        params.ny = ny
-        params.sub_domain_size = (nx, ny)
+        params = new{data_type, typeof(device), Any}()
+        params.N = N
         params.device = device
 
         # Each initialization step consumes the options it needs. At the end no option should remain.
@@ -357,7 +343,7 @@ mutable struct ArmonParameters{Flt_T, Device, DeviceParams}
         # TODO: this is ugly, but allows to circumvent a circular dependency between `init_device`,
         # `ArmonParameters` and the Kokkos backend of `@generic_kernel`: this way we can access the
         # index type from the `@generated` function without relying on external functions.
-        complete_params = new{flt_type, typeof(device), typeof(params.backend_options)}()
+        complete_params = new{data_type, typeof(device), typeof(params.backend_options)}()
         for field in fieldnames(typeof(params))
             setfield!(complete_params, field, getfield(params, field))
         end
@@ -384,15 +370,20 @@ end
 
 
 function init_MPI(params::ArmonParameters;
-    use_MPI = true, px = 1, py = 1, reorder_grid = true, global_comm = nothing, gpu_aware = true,
+    use_MPI = true, P = (1, 1), reorder_grid = true, global_comm = nothing, gpu_aware = true,
     options...
 )
     global_comm = something(global_comm, MPI.COMM_WORLD)
     params.global_comm = global_comm
 
-    (; nx, ny) = params
-    if (nx % px != 0) || (ny % py != 0)
-        solver_error(:config, "The dimensions of the global domain ($nx x $ny) are not divisible by the number of processors ($px x $py)")
+    if length(P) != length(params.N)
+        solver_error(:config, "Mismatched dimensions: expected a grid of $(length(N)) processes, got: $(length(P))")
+    end
+
+    if any(params.N .% P .!= 0)
+        P_str = join(P, '×')
+        N_str = join(params.N, '×')
+        solver_error(:config, "The dimensions of the global domain $N_str are not divisible by the number of processors $P_str")
     end
 
     params.use_MPI = use_MPI
@@ -404,14 +395,17 @@ function init_MPI(params::ArmonParameters;
 
         params.rank = MPI.Comm_rank(global_comm)
         params.proc_size = MPI.Comm_size(global_comm)
-        params.proc_dims = (px, py)
+        params.proc_dims = P
 
-        # Create a cartesian grid communicator of px × py processes. reorder=true can be very
+        # Create a cartesian grid communicator of P processes. reorder=true can be very
         # important for performance since it will optimize the layout of the processes.
-        C_COMM = MPI.Cart_create(global_comm, [Int32(px), Int32(py)], [Int32(0), Int32(0)], reorder_grid)
+        p32 = collect(Int32.(P))
+        periodic_borders = zeros(Int32, length(p32))
+        C_COMM = MPI.Cart_create(global_comm, p32, periodic_borders, reorder_grid)
         params.cart_comm = C_COMM
         params.cart_coords = tuple(MPI.Cart_coords(C_COMM)...)
 
+        # TODO: dimension agnostic
         params.neighbours = Dict(
             Left   => MPI.Cart_shift(C_COMM, 0, -1)[2],
             Right  => MPI.Cart_shift(C_COMM, 0,  1)[2],
@@ -421,9 +415,9 @@ function init_MPI(params::ArmonParameters;
     else
         params.rank = 0
         params.proc_size = 1
-        params.proc_dims = (px, py)
+        params.proc_dims = ntuple(Returns(0), length(params.N))
         params.cart_comm = global_comm
-        params.cart_coords = (0, 0)
+        params.cart_coords = ntuple(Returns(0), length(params.N))
         params.neighbours = Dict(
             Left   => MPI.PROC_NULL,
             Right  => MPI.PROC_NULL,
@@ -568,10 +562,8 @@ function init_test(params::ArmonParameters{T};
     params.origin = Tuple(T.(origin))
 
     if isnothing(test)
-        (sx, sy) = params.domain_size
-        Δx::T = sx / params.nx
-        Δy::T = sy / params.ny
-        test = create_test(Δx, Δy, test_type)
+        Δx = params.domain_size ./ params.N
+        test = create_test(Δx, test_type)
     end
     params.test = test
     params.maxcycle = maxcycle
@@ -586,23 +578,13 @@ end
 
 
 function init_indexing(params::ArmonParameters; options...)
-    (; nx, ny) = params
-
     # Dimensions of the global domain
-    g_nx = nx
-    g_ny = ny
+    params.global_grid = params.N
 
     # Dimensions of an array of the sub-domain
-    (px, py) = params.proc_dims
-    nx ÷= px
-    ny ÷= py
+    params.N = params.N .÷ params.proc_dims
 
-    params.nx = nx
-    params.ny = ny
-    params.global_grid = (g_nx, g_ny)
-
-    params.dx = params.domain_size[1] / g_nx
-
+    params.dx = 0
     params.steps_ranges = StepsRanges()
 
     return options
@@ -722,7 +704,7 @@ end
 
 function print_parameters(io::IO, p::ArmonParameters; pad = 20)
     println(io, "Armon parameters:")
-    print_parameter(io, pad, "ieee_bits", sizeof(data_type(p)) * 8)
+    print_parameter(io, pad, "data_type", data_type(p))
     print_device_info(io, pad, p)
     print_parameter(io, pad, "MPI", p.use_MPI)
 
@@ -795,8 +777,9 @@ function print_parameters(io::IO, p::ArmonParameters; pad = 20)
     end
 
     domain_str = p.use_MPI ? "sub-domain" : "domain"
-    print_parameter(io, pad, domain_str, "$(p.nx)×$(p.ny) with $(p.nghost) ghosts", nl=false)
-    println(io, " (", @sprintf("%g", p.nx * p.ny), " real cells)")
+    N_str = join(p.N, '×')
+    print_parameter(io, pad, domain_str, "$N_str with $(p.nghost) ghosts", nl=false)
+    println(io, " (", @sprintf("%g", prod(p.N)), " real cells)")
 
     if p.use_MPI
         print_parameter(io, pad, "coords", join(p.cart_coords, "×"), nl=false)
@@ -812,7 +795,7 @@ function print_parameters(io::IO, p::ArmonParameters; pad = 20)
     println(io, ", origin: (", join(p.origin, ", "), ")")
 
     grid_size, static_sized_grid, _ = grid_dimensions(p)
-    print_grid_dimensions(io, grid_size, static_sized_grid, p.block_size, (p.nx, p.ny), p.nghost; pad)
+    print_grid_dimensions(io, grid_size, static_sized_grid, p.block_size, p.N, p.nghost; pad)
 end
 
 

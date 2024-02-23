@@ -72,7 +72,7 @@ end
 
 
 function time_loop(params::ArmonParameters, data::BlockGrid)
-    (; maxtime, maxcycle, nx, ny, silent, animation_step, is_root, initial_mass, initial_energy) = params
+    (; maxtime, maxcycle, silent, animation_step, is_root, initial_mass, initial_energy) = params
 
     params.cycle = 0
     params.time = 0
@@ -125,7 +125,7 @@ function time_loop(params::ArmonParameters, data::BlockGrid)
     t2 = time_ns()
 
     solve_time = t2 - t1
-    grind_time = solve_time / (params.cycle * nx * ny)
+    grind_time = solve_time / (params.cycle * prod(params.N))
 
     if is_root
         if silent < 3

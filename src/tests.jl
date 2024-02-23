@@ -10,9 +10,10 @@ struct Sedov{T}  <: TwoStateTestCase
     r::T
 end
 
-create_test(::T, ::T, ::Type{Test}) where {T, Test <: TestCase} = Test()
+create_test(::NTuple, ::Type{Test}) where {Test <: TestCase} = Test()
 
-function create_test(Δx::T, Δy::T, ::Type{Sedov}) where T
+function create_test(Δx::NTuple, ::Type{Sedov})
+    T = eltype(Δx)
     r_Sedov::T = sqrt(Δx^2 + Δy^2) / sqrt(2)
     return Sedov{T}(r_Sedov)
 end
