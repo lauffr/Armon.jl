@@ -1,9 +1,33 @@
 @testset "Blocking" begin
 
 @testset "BlockGrid" begin
-    @testset "$block_size" for block_size in ((32, 32), (16, 48), (110, 110))
+    @testset "$block_size" for block_size in ((32, 32), (16, 48), (110, 110), #= no blocking =# (0, 0))
         ref_params = get_reference_params(:Sod, Float64; N=(100, 100), block_size)
         grid = Armon.BlockGrid(ref_params)
+
+        @testset "Grid" begin
+            if prod(block_size) > 0
+                @test !isempty(grid.device_blocks)
+                @test prod(grid.grid_size) == length(grid.device_blocks) + length(grid.device_edge_blocks)
+            else
+                @test isempty(grid.device_blocks)
+                @test !isempty(grid.device_edge_blocks)
+                @test prod(grid.grid_size) == length(grid.device_edge_blocks)
+            end
+        end
+
+        @testset "Domain" begin
+            real_cell_count = 0
+            all_cell_count = 0
+            for blk in Armon.device_blocks(grid)
+                real_cell_count += prod(Armon.real_block_size(blk.size))
+                all_cell_count  += prod(Armon.block_size(blk.size))
+            end
+            @test real_cell_count == prod(params.N)
+            if prod(grid.grid_size) == 1
+                @test all_cell_count  == prod(params.N .+ 2*params.nghost)
+            end
+        end
 
         @testset "Neighbours" begin
             for blk in Iterators.flatten((grid.device_blocks, grid.device_edge_blocks, grid.remote_blocks))
@@ -133,6 +157,7 @@ end
         (5, ( 47, 100), (17, 37)),
         (4, ( 96,  96), (32, 32)),  # No edge blocks
         (4, ( 16,  16), (32, 32)),  # Only edge blocks
+        (3, ( 16,  33), ( 0,  0)),  # No blocking, only edge blocks
         (0, (100, 100), (32, 32)),  # 0 ghosts
     )
         params = ArmonParameters(;

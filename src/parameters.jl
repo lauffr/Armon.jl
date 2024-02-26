@@ -413,7 +413,7 @@ function init_MPI(params::ArmonParameters;
     else
         params.rank = 0
         params.proc_size = 1
-        params.proc_dims = ntuple(Returns(0), length(params.N))
+        params.proc_dims = ntuple(Returns(1), length(params.N))
         params.cart_comm = global_comm
         params.cart_coords = ntuple(Returns(0), length(params.N))
         params.neighbours = Dict(
@@ -450,10 +450,13 @@ function init_device(params::ArmonParameters;
             # Estimate the optimal block size, given the solver's stencils
             # TODO
             block_size = (64, 64)
-        else
+        elseif use_gpu
             # TODO: GPU block size ?? 1024? but how?
             block_size = (32, 32)
             block_size = (1024, 1)
+        else
+            # Disable cache blocking by using an empty block size
+            block_size = (0, 0)
         end
     end
 

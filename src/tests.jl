@@ -14,7 +14,7 @@ create_test(::NTuple, ::Type{Test}) where {Test <: TestCase} = Test()
 
 function create_test(Δx::NTuple, ::Type{Sedov})
     T = eltype(Δx)
-    r_Sedov::T = sqrt(Δx^2 + Δy^2) / sqrt(2)
+    r_Sedov::T = hypot(Δx...) / sqrt(2)
     return Sedov{T}(r_Sedov)
 end
 

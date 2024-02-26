@@ -191,6 +191,11 @@ end
 grid_dimensions(params::ArmonParameters) = grid_dimensions(params.block_size, params.N, params.nghost)
 
 function grid_dimensions(block_size::NTuple{D, Int}, domain_size::NTuple{D, Int}, ghost::Int) where {D}
+    if prod(block_size) == 0
+        # No cache blocking: only one dynamic block for the whole grid
+        return ntuple(Returns(1), D), ntuple(Returns(0), D), domain_size .+ 2*ghost
+    end
+
     # `block_size` includes the number of ghost cells, while `domain_size` is in real cells.
     real_blocks = block_size .- 2*ghost  # number of real cells in a block in each dim
     if prod(real_blocks) < 1
@@ -511,13 +516,24 @@ function print_grid_dimensions(
     print_parameter(io, pad, "block size", "$static_block_str cells ($static_cell_count total)")
 
     print_parameter(io, pad, "grid", "$grid_str blocks ($block_count total)")
-    print_parameter(io, pad, "static grid", "$static_grid_str static blocks ($static_block_count total, $static_block_ratio)")
-    print_parameter(io, pad, "static block",
-        "$real_size cells ($real_count total), \
-         with $ghost ghost cells ($ghost_count total, $real_ghost_ratio of the block)")
-    print_parameter(io, pad, "edge grid", "$edge_block_count edge blocks ($edge_block_ratio)")
-    print_parameter(io, pad, "edge blocks", "$edge_pos_str, containing $edge_cell_ratio of all real cells")
-    print_parameter(io, pad, "remote grid", "$remote_block_count remote blocks, containing $remote_buffers_size cells (total)")
+    if static_block_count == 0 && edge_block_count == 1
+        # No blocking: there is only a single block in the grid
+        ghost_count = prod(cell_size .+ 2*ghost) - prod(cell_size)
+        real_ghost_ratio = @sprintf("%.02g%%", ghost_count / prod(cell_size) * 100)
+        print_parameter(io, pad, "static grid", "0 static blocks")
+        print_parameter(io, pad, "edge grid", "1 edge block, containing all cells, \
+            with $ghost ghost cells ($ghost_count total, $real_ghost_ratio of the block)")
+    else
+        print_parameter(io, pad, "static grid", "$static_grid_str static blocks \
+            ($static_block_count total, $static_block_ratio)")
+        print_parameter(io, pad, "static block",
+            "$real_size cells ($real_count total), \
+            with $ghost ghost cells ($ghost_count total, $real_ghost_ratio of the block)")
+        print_parameter(io, pad, "edge grid", "$edge_block_count edge blocks ($edge_block_ratio)")
+        print_parameter(io, pad, "edge blocks", "$edge_pos_str, containing $edge_cell_ratio of all real cells")
+    end
+    print_parameter(io, pad, "remote grid", "$remote_block_count remote blocks, \
+        containing $remote_buffers_size cells (total)")
 end
 
 
