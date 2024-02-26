@@ -25,22 +25,47 @@ armon
 SolverStats
 StepsRanges
 data_type
-@indexing_vars
-@i
-@reuse_tls
 @section
 ```
 
-## Data
+## Grid and blocks
 
 ```@docs
-ArmonData
-ArmonDualData
+BlockGrid
+TaskBlock
+LocalTaskBlock
+RemoteTaskBlock
+BlockState
 device_to_host!
 host_to_device!
-iter_recv_requests
-iter_send_requests
 buffers_on_device
+device_is_host
+device_blocks
+host_blocks
+block_idx
+edge_block_idx
+remote_block_idx
+@iter_blocks
+```
+
+### Block size and iteration
+
+```@docs
+BlockSize
+StaticBSize
+DynamicBSize
+block_size
+real_block_size
+ghosts
+border_domain
+ghost_domain
+block_domain_range
+position
+lin_position
+in_grid
+is_ghost
+BlockRowIterator
+DomainRange
 ```
 
 ## Device and backends

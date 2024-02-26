@@ -28,16 +28,15 @@ if isinteractive()
     menu = """
     Tests available:
      - all            All tests below
-     - short          Equivalent to 'quality, stability, domains, convergence, conservation, kernels'
+     - short          Equivalent to 'quality, stability, convergence, conservation'
      - quality        Code quality
      - stability      Type stability
      - domains        Domain 2D indexing
-     - kernels        Compilation and correctness of indexing in generic kernels (CPU & GPU)
+     - blocking       Blocking tests
      - convergence    Convergence to the reference solutions
      - conservation   Check that the energy and mass for each are kept constant throughout a lot of cycles.
      - GPU            Equivalence of the GPU backends (CUDA & ROCm) with the CPU
      - kokkos         Equivalence of the Kokkos backend with the Julia CPU backend
-     - performance    Checks for any regression in performance
      - async          Checks that separating the domain and treating the boundary conditions asynchronously 
                       doesn't introduce any variations in the result.
      - MPI            Equivalence with the single domain case and asynchronous communications.
@@ -58,10 +57,10 @@ filter!(!isempty, main_options)
 main_options = main_options .|> Symbol |> union
 
 if :all in main_options
-    expanded_options = [:quality, :stability, :domains, :convergence, :conservation, :kernels,
-                        :kokkos, :gpu, :performance, :async, :mpi]
+    expanded_options = [:quality, :stability, :domains, :blocking, :convergence, :conservation,
+                        :kokkos, :gpu, :async, :mpi]
 elseif :short in main_options
-    expanded_options = [:quality, :stability, :domains, :convergence, :conservation, :kernels]
+    expanded_options = [:quality, :stability, :convergence, :conservation]
 else
     expanded_options = []
 end
@@ -92,20 +91,17 @@ function do_tests(tests_to_do)
             elseif test === :quality        run_file("code_quality.jl")
             elseif test === :stability      run_file("type_stability.jl")
             elseif test === :domains        run_file("domains.jl")
+            elseif test === :blocking       run_file("blocking.jl")
             elseif test === :convergence    run_file("convergence.jl")
             elseif test === :conservation   run_file("conservation.jl")
-            elseif test === :kernels        run_file("kernels.jl")
             elseif test === :gpu            run_file("gpu.jl")
             elseif test === :kokkos         run_file("kokkos.jl")
-            elseif test === :performance    run_file("performance.jl")
             elseif test === :mpi            run_file("mpi.jl")
             else
                 error("Unknown test set: $test")
             end
 
             # TODO: susceptibility test comparing a result with different rounding modes
-            # TODO: idempotence of `measure_time=true/false`
-            # TODO: NaN propagation
         end
     end
 

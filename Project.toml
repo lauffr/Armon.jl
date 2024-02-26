@@ -1,7 +1,7 @@
 name = "Armon"
 uuid = "b773a7a3-b593-48d6-82f6-54bf745a629b"
 authors = ["Luc Briand <luc.briand35@gmail.com> and contributors"]
-version = "0.4.1"
+version = "0.5.0"
 
 [deps]
 AMDGPU = "21141c5a-9bdb-4563-92ae-f87d6854732e"
@@ -14,27 +14,31 @@ NVTX = "5da4648a-3479-48b8-97b9-01cb529c0a1f"
 Polyester = "f517fe37-dbe3-4b94-8317-1923a5111588"
 Preferences = "21216c6a-2e73-6563-6e65-726566657250"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
-Requires = "ae029012-a4dd-5104-9daa-d747884805df"
 ThreadPinning = "811555cd-349b-4f26-b7bc-1f208b848042"
 TimerOutputs = "a759f4b9-e2f1-59dc-863e-4aeb61b1ea8f"
+oneAPI = "8f75cd03-7ff8-4ecb-9b8f-daf728133b1b"
 
 [weakdeps]
 AMDGPU = "21141c5a-9bdb-4563-92ae-f87d6854732e"
 CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
 Kokkos = "3296cea9-b0de-4b57-aba0-ce554b517c3b"
 NVTX = "5da4648a-3479-48b8-97b9-01cb529c0a1f"
+oneAPI = "8f75cd03-7ff8-4ecb-9b8f-daf728133b1b"
 
 [extensions]
 ArmonAMDGPU = "AMDGPU"
 ArmonCUDA = "CUDA"
 ArmonKokkos = "Kokkos"
 ArmonNVTX = "NVTX"
+ArmonOneAPI = "oneAPI"
 
 [compat]
 AMDGPU = "0.6, 0.7, 0.8"
 CUDA = "4.1 - 5, 5"
 KernelAbstractions = "0.9"
+MPI = "0.20.16"
 julia = ">= 1.9"
+oneAPI = "1"
 
 [extras]
 AMDGPU = "21141c5a-9bdb-4563-92ae-f87d6854732e"
@@ -44,6 +48,7 @@ NVTX = "5da4648a-3479-48b8-97b9-01cb529c0a1f"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 ThreadPinning = "811555cd-349b-4f26-b7bc-1f208b848042"
+oneAPI = "8f75cd03-7ff8-4ecb-9b8f-daf728133b1b"
 
 [targets]
-test = ["Test", "AMDGPU", "CUDA", "MPI", "Printf", "ThreadPinning"]
+test = ["Test", "AMDGPU", "CUDA", "MPI", "Printf", "ThreadPinning", "oneAPI"]

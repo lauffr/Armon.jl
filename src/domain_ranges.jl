@@ -2,36 +2,6 @@
 import Base: oneto, length, size, axes, isempty, first, last, in, show
 
 #
-# Basic indexing macros
-#
-
-"""
-    @indexing_vars(params)
-
-Brings the parameters needed for the `@i` macro into the current scope.
-"""
-macro indexing_vars(params)
-    return esc(quote
-        (; index_start, row_length, col_length, idx_row, idx_col) = $(params)
-    end)
-end
-
-"""
-    @i(i, j)
-
-Converts the two-dimensional indexes `i` and `j` to a mono-dimensional index.
-
-```julia
-    idx = @i(i, j)
-```
-"""
-macro i(i, j)
-    return esc(quote
-        index_start + $(j) * idx_row + $(i) * idx_col
-    end)
-end
-
-#
 # Range utilities
 #
 
@@ -59,10 +29,13 @@ function connect_ranges(r1::OrdinalRange, r2::OrdinalRange)
     return first(r1):step(r1):last(r2)
 end
 
-#
-# DomainRange: Two dimensional range to index a 2D array stored with contiguous rows
-#
 
+"""
+    DomainRange
+    
+Two dimensional range to index a 2D array stored with contiguous rows.
+Not equivalent to `CartesianIndices` as it handles `StepRange`s properly.
+"""
 struct DomainRange
     col::StepRange{Int, Int}
     row::StepRange{Int, Int}
@@ -71,8 +44,8 @@ end
 DomainRange() = DomainRange(1:1:0, 1:1:0)
 
 length(dr::DomainRange) = length(dr.col) * length(dr.row)
-size(dr::DomainRange) = (length(dr.col), length(dr.row))
-axes(dr::DomainRange) = (oneto(length(dr.col)), oneto(length(dr.row)))
+size(dr::DomainRange) = (length(dr.row), length(dr.col))
+axes(dr::DomainRange) = (oneto(length(dr.row)), oneto(length(dr.col)))
 
 isempty(dr::DomainRange) = length(dr) == 0
 
@@ -109,38 +82,43 @@ direction_length(dr::DomainRange, dir::Axis) = dir == X_axis ? length(dr.row) : 
 
 linear_range(dr::DomainRange) = first(dr):last(dr)
 
-show(io::IO, dr::DomainRange) = print(io, "DomainRange{$(dr.col), $(dr.row)}")
+show(io::IO, dr::DomainRange) = print(io, "DomainRange($(dr.col), $(dr.row))")
 
 """
     StepsRanges
 
 Holds indexing information for all steps of the solver.
+
+Domains are stored as block corner offsets: blocks can have different sizes, but always the same
+amount of ghost cells, therefore the iteration domain is determined from the dimensions of the block.
+The first field is the offset to the first cell, the second is the offset to the last cell.
 """
 mutable struct StepsRanges
-    direction::Axis
-    real_domain::DomainRange
-    full_domain::DomainRange
+    direction       :: Axis
+    real_domain     :: NTuple{2, Dims{2}}
+    full_domain     :: NTuple{2, Dims{2}}
 
-    EOS::DomainRange
-    fluxes::DomainRange
-    cell_update::DomainRange
-    advection::DomainRange
-    projection::DomainRange
+    EOS             :: NTuple{2, Dims{2}}
+    fluxes          :: NTuple{2, Dims{2}}
+    cell_update     :: NTuple{2, Dims{2}}
+    advection       :: NTuple{2, Dims{2}}
+    projection      :: NTuple{2, Dims{2}}
 
-    outer_lb_EOS::DomainRange
-    outer_rt_EOS::DomainRange
-    outer_lb_fluxes::DomainRange
-    outer_rt_fluxes::DomainRange
-    inner_EOS::DomainRange
-    inner_fluxes::DomainRange
+    outer_lb_EOS    :: NTuple{2, Dims{2}}
+    outer_rt_EOS    :: NTuple{2, Dims{2}}
+    outer_lb_fluxes :: NTuple{2, Dims{2}}
+    outer_rt_fluxes :: NTuple{2, Dims{2}}
+    inner_EOS       :: NTuple{2, Dims{2}}
+    inner_fluxes    :: NTuple{2, Dims{2}}
 end
 
 
 function StepsRanges()
-    StepsRanges(
+    default_dim = ((0, 0), (0, 0))
+    return StepsRanges(
         X_axis,
-        DomainRange(), DomainRange(),
-        DomainRange(), DomainRange(), DomainRange(), DomainRange(), DomainRange(),
-        DomainRange(), DomainRange(), DomainRange(), DomainRange(), DomainRange(), DomainRange(),
+        default_dim, default_dim,
+        default_dim, default_dim, default_dim, default_dim, default_dim,
+        default_dim, default_dim, default_dim, default_dim, default_dim, default_dim,
     )
 end

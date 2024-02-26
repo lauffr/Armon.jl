@@ -1,14 +1,11 @@
 
-abstract type Limiter end
-
 struct NoLimiter       <: Limiter end
 struct MinmodLimiter   <: Limiter end
 struct SuperbeeLimiter <: Limiter end
 
-# TODO: apply @kernel_function to the limiters (requires most likely to separate 'generic_kernel.jl' into its own package)
-limiter(_::T, ::NoLimiter)       where T = one(T)
-limiter(r::T, ::MinmodLimiter)   where T = max(zero(T), min(one(T), r))
-limiter(r::T, ::SuperbeeLimiter) where T = max(zero(T), min(2r, one(T)), min(r, 2*one(T)))
+@kernel_function limiter(_::T, ::NoLimiter)       where T = one(T)
+@kernel_function limiter(r::T, ::MinmodLimiter)   where T = max(zero(T), min(one(T), r))
+@kernel_function limiter(r::T, ::SuperbeeLimiter) where T = max(zero(T), min(2r, one(T)), min(r, 2*one(T)))
 
 limiter_from_name(::Val{:no_limiter}) = NoLimiter()
 limiter_from_name(::Val{:minmod})     = MinmodLimiter()

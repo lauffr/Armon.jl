@@ -206,3 +206,35 @@ register_section_callback(SectionCallback((
     timeit_section_start,
     timeit_section_end
 )))
+
+
+function flatten_sections(to::TimerOutput, sections)
+    t, b = TimerOutputs.totmeasured(to)
+    section_timers = Dict{String, TimerOutput}()
+    new_to = flatten_sections(to, sections, section_timers)
+    merge!(new_to.inner_timers, section_timers)
+    return TimerOutput(
+        new_to.start_data, new_to.accumulated_data, new_to.inner_timers,
+        TimerOutput[], new_to.name, true, true, (t, b), "", new_to
+    )
+end
+
+
+function flatten_sections(to::TimerOutput, sections, section_timers)
+    inner_timers = Dict{String, TimerOutput}()
+    for (name, inner_timer) in pairs(to.inner_timers)
+        if name in sections
+            if haskey(section_timers, name)
+                section_timers[name].accumulated_data += inner_timer.accumulated_data
+            else
+                section_timers[name] = copy(inner_timer)
+            end
+        else
+            inner_timer = flatten_sections(inner_timer, sections, section_timers)
+            inner_timers[name] = inner_timer
+        end
+    end
+    toc = copy(to)
+    toc.inner_timers = inner_timers
+    return toc
+end

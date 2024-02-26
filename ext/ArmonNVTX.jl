@@ -1,7 +1,7 @@
 module ArmonNVTX
 
 using Armon
-isdefined(Base, :get_extension) ? (import NVTX) : (import ..NVTX)
+import NVTX
 
 
 const armon_domain = NVTX.Domain("Armon")

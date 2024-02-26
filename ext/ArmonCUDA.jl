@@ -1,8 +1,8 @@
 module ArmonCUDA
 
 using Armon
-isdefined(Base, :get_extension) ? (import CUDA) : (import ..CUDA)
 using KernelAbstractions
+import CUDA
 import CUDA: CUDABackend
 
 

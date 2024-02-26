@@ -10,10 +10,11 @@ struct Sedov{T}  <: TwoStateTestCase
     r::T
 end
 
-create_test(::T, ::T, ::Type{Test}) where {T, Test <: TestCase} = Test()
+create_test(::NTuple, ::Type{Test}) where {Test <: TestCase} = Test()
 
-function create_test(Δx::T, Δy::T, ::Type{Sedov}) where T
-    r_Sedov::T = sqrt(Δx^2 + Δy^2) / sqrt(2)
+function create_test(Δx::NTuple, ::Type{Sedov})
+    T = eltype(Δx)
+    r_Sedov::T = hypot(Δx...) / sqrt(2)
     return Sedov{T}(r_Sedov)
 end
 
@@ -26,7 +27,7 @@ test_from_name(::Val{:Sedov})     = Sedov
 test_from_name(::Val{s}) where s = solver_error(:config, "Unknown test case: '$s'")
 test_from_name(s::Symbol) = test_from_name(Val(s))
 
-test_name(::Test) where {Test <: TestCase} = Test.name.name
+test_name(::Test) where {Test <: TestCase} = nameof(Test)
 
 default_domain_size(::Type{<:TestCase}) = (1, 1)
 default_domain_size(::Type{Sedov}) = (2, 2)
@@ -42,7 +43,7 @@ default_max_time(::Union{Sod, Sod_y, Sod_circ}) = 0.20
 default_max_time(::Bizarrium) = 80e-6
 default_max_time(::Sedov) = 1.0
 
-specific_heat_ratio(::Union{Sod, Sod_y, Sod_circ, Bizarrium, Sedov}) = 7/5
+specific_heat_ratio(::TestCase) = 7/5
 
 is_conservative(::TestCase) = true
 is_conservative(::Bizarrium) = false
@@ -55,11 +56,11 @@ Base.show(io::IO, ::Sod_circ)  = print(io, "Sod shock tube (cylindrical symmetry
 Base.show(io::IO, ::Bizarrium) = print(io, "Bizarrium")
 Base.show(io::IO, ::Sedov)     = print(io, "Sedov")
 
-test_region_high(x::T, _::T, ::Sod)       where T = x ≤ 0.5
-test_region_high(_::T, y::T, ::Sod_y)     where T = y ≤ 0.5
-test_region_high(x::T, y::T, ::Sod_circ)  where T = (x - T(0.5))^2 + (y - T(0.5))^2 ≤ T(0.09)  # radius of 0.3 
-test_region_high(x::T, _::T, ::Bizarrium) where T = x ≤ 0.5
-test_region_high(x::T, y::T, s::Sedov{T}) where T = x^2 + y^2 ≤ s.r^2
+test_region_high(x::Tuple{Vararg{T}}, ::Sod)       where {T} = x[1] ≤ 0.5
+test_region_high(x::Tuple{Vararg{T}}, ::Sod_y)     where {T} = x[2] ≤ 0.5
+test_region_high(x::Tuple{Vararg{T}}, ::Sod_circ)  where {T} = sum((x .- T(0.5)).^2) ≤ T(0.09)  # radius of 0.3 
+test_region_high(x::Tuple{Vararg{T}}, ::Bizarrium) where {T} = x[1] ≤ 0.5
+test_region_high(x::Tuple{Vararg{T}}, s::Sedov{T}) where {T} = sum(x.^2) ≤ s.r^2
 
 
 struct InitTestParamsTwoState{T}
@@ -77,14 +78,6 @@ struct InitTestParamsTwoState{T}
     ) where {T}
         new{T}(high_ρ, low_ρ, high_E, low_E, high_u, low_u, high_v, low_v)
     end
-end
-
-
-struct InitTestParams{T}
-    ρ::T
-    E::T
-    u::T
-    v::T
 end
 
 
@@ -214,5 +207,27 @@ function boundary_condition(::Sedov)
         right  = FreeFlow,
         bottom = FreeFlow,
         top    = FreeFlow
+    )
+end
+
+#
+# DebugIndexes
+#
+
+struct DebugIndexes <: TestCase end
+
+test_from_name(::Val{:DebugIndexes}) = DebugIndexes
+
+default_CFL(::DebugIndexes) = 0
+default_max_time(::DebugIndexes) = 0
+
+Base.show(io::IO, ::DebugIndexes) = print(io, "DebugIndexes")
+
+function boundary_condition(::DebugIndexes)
+    return Boundaries(
+        left   = Dirichlet,
+        right  = Dirichlet,
+        bottom = Dirichlet,
+        top    = Dirichlet
     )
 end

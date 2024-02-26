@@ -1,7 +1,8 @@
 /docs/build/
 .idea
+.vscode
 /lib/armon_cpp/cmake-*
 /.kokkos-build
 Manifest.toml
 LocalPreferences.toml
-.vscode
+/utils

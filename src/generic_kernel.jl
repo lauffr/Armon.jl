@@ -14,7 +14,7 @@ macro threads(expr)
         end)
     else
         return esc(quote
-            @batch $(expr)
+            Armon.@batch $(expr)
         end)
     end
 end
@@ -37,7 +37,7 @@ end
 
 
 function make_threaded_loop(expr::Expr; choice=:dynamic)
-    with = :(@inbounds @threads $(expr))
+    with = :(@inbounds Armon.@threads $(expr))
     without = :($(expr))
 
     if choice == :dynamic
@@ -731,9 +731,11 @@ function transform_kernel(func::Expr)
 
     # -- Kokkos --
 
-    kokkos_def, kokkos_call = make_kokkos_kernel_call(func_name, original_cpu_def, is_V_in_where, loop_params_names)
+    # TODO: kokkos calls
+    # kokkos_def, kokkos_call = make_kokkos_kernel_call(func_name, original_cpu_def, is_V_in_where, loop_params_names)
+    kokkos_call = :(error("kokkos NYI"))
     kokkos_block = quote
-        @generated $(combinedef(kokkos_def))
+        # @generated $(combinedef(kokkos_def))
     end
 
     setup_kokkos_call = Expr(:block)
@@ -811,13 +813,13 @@ function transform_kernel(func::Expr)
     main_def = deepcopy(def)
     main_def[:name] = func_name
 
-    # Filter out the arguments to the main function that are present in the ArmonData or 
+    # Filter out the arguments to the main function that are present in the LocalTaskBlock or 
     # ArmonParameters structs, to then unpack them from a struct instance.
-    main_args, data_args = pack_struct_fields(args, ArmonData)
+    main_args, data_args = pack_struct_fields(args, LocalTaskBlock)
     main_args, params_args = pack_struct_fields(main_args, ArmonParameters)
 
     params_type = is_T_in_where ? :(ArmonParameters{T}) : :(ArmonParameters)
-    data_type   = is_V_in_where ? :(ArmonData{V})       : :(ArmonData)
+    data_type   = is_V_in_where ? :(LocalTaskBlock{V})  : :(LocalTaskBlock)
 
     if isempty(data_args)
         main_def[:args] = [:(params::$params_type), main_loop_arg, main_args...]

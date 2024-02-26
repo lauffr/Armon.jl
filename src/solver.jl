@@ -15,7 +15,7 @@ struct SolverStats
     solve_time::Float64  # in seconds
     cell_count::Int
     giga_cells_per_sec::Float64
-    data::Union{Nothing, ArmonDualData}
+    data::Union{Nothing, BlockGrid}
     timer::Union{Nothing, TimerOutput}
 end
 
@@ -40,17 +40,11 @@ macro checkpoint(step_label)
 end
 
 
-function solver_cycle(params::ArmonParameters, data::ArmonDualData)
+function solver_cycle(params::ArmonParameters, data::BlockGrid)
     if params.cycle == 0
         step_checkpoint(params, data, "init_test") && return true
-        @section "EOS_init" update_EOS!(params, data, :full)
+        @section "EOS_init" update_EOS!(params, data)
         step_checkpoint(params, data, "EOS_init") && return true
-    end
-
-    if params.async_comms && !haskey(params.tasks_storage, :lb)
-        params.tasks_storage[:lb] = nothing
-        params.tasks_storage[:rt] = nothing
-        params.tasks_storage[:inner] = nothing
     end
 
     (@section "time_step" time_step(params, data)) && return true
@@ -61,68 +55,14 @@ function solver_cycle(params::ArmonParameters, data::ArmonDualData)
         update_steps_ranges(params)
         params.cycle_dt = params.curr_cycle_dt * dt_factor
 
-        @section "EOS" update_EOS!(params, data, :full)
+        @section "EOS" update_EOS!(params, data)
         @checkpoint("EOS") && return true
 
-        if params.async_comms
-            #=
-            ┌───┬────┬───────────┬────┬───┐
-            │   │    │           │    │   │
-            │ G │ LB │   inner   │ RT │ G │
-            │   │    │           │    │   │
-            └───┴────┴───────────┴────┴───┘
+        @section "BC" block_ghost_exchange(params, data)
+        @checkpoint("boundary_conditions") && return true
 
-            - G: ghost cells
-            - LB: left (X axis pass) or bottom (Y axis pass) domain
-            - RT: right (X axis pass) or top (Y axis pass) domain
-            - inner: inner domain
-
-            Task graph:
-                     ┌──────────────────┐
-                   ┌─┤   Fluxes inner   ├─┐
-                   │ └──────────────────┘ │
-                   │                      │
-             ┌───┐ │ ┌─────┐  ┌─────────┐ │
-            ─┤EOS├─┼─┤BC LB├──┤Fluxes LB├─┼─
-             └───┘ │ └─────┘  └─────────┘ │
-                   │                      │
-                   │ ┌─────┐  ┌─────────┐ │
-                   └─┤BC RT├──┤Fluxes RT├─┘
-                     └─────┘  └─────────┘
-
-            TODO: allow async EOS by computing inner cells EOS variables in `Fluxes LB/RT` and outer
-              cells EOS variables in `Fluxes inner`, breaking the mutual dependencies of those tasks
-            =#
-
-            wait(params)
-
-            @sync begin
-                @reuse_tls params.tasks_storage[:lb] @async begin
-                    @section "BC lb"     async=true boundary_conditions!(params, data, :outer_lb)
-                    @section "fluxes lb" async=true numerical_fluxes!(params, data, :outer_lb)
-                    wait(params)  # We must wait for the CUDA/HIP stream to end before ending any task
-                end
-
-                @reuse_tls params.tasks_storage[:rt] @async begin
-                    @section "BC rt"     async=true boundary_conditions!(params, data, :outer_rt)
-                    @section "fluxes rt" async=true numerical_fluxes!(params, data, :outer_rt)
-                    wait(params)
-                end
-
-                @reuse_tls params.tasks_storage[:inner] @async begin
-                    @section "fluxes"    async=true numerical_fluxes!(params, data, :inner)
-                    wait(params)
-                end
-            end
-
-            @checkpoint("numerical_fluxes") && return true
-        else
-            @section "BC" boundary_conditions!(params, data)
-            @checkpoint("boundary_conditions") && return true
-
-            @section "fluxes" numerical_fluxes!(params, data, :full)
-            @checkpoint("numerical_fluxes") && return true
-        end
+        @section "fluxes" numerical_fluxes!(params, data)
+        @checkpoint("numerical_fluxes") && return true
 
         @section "update" cell_update!(params, data)
         @checkpoint("cell_update") && return true
@@ -135,8 +75,8 @@ function solver_cycle(params::ArmonParameters, data::ArmonDualData)
 end
 
 
-function time_loop(params::ArmonParameters, data::ArmonDualData)
-    (; maxtime, maxcycle, nx, ny, silent, animation_step, is_root, initial_mass, initial_energy) = params
+function time_loop(params::ArmonParameters, data::BlockGrid)
+    (; maxtime, maxcycle, silent, animation_step, is_root, initial_mass, initial_energy) = params
 
     params.cycle = 0
     params.time = 0
@@ -189,7 +129,7 @@ function time_loop(params::ArmonParameters, data::ArmonDualData)
     t2 = time_ns()
 
     solve_time = t2 - t1
-    grind_time = solve_time / (params.cycle * nx * ny)
+    grind_time = solve_time / (params.cycle * prod(params.N))
 
     if is_root
         if silent < 3
@@ -253,7 +193,7 @@ function armon(params::ArmonParameters{T}) where T
     # Allocate without initialisation in order to correctly map the NUMA space using the first-touch
     # policy when working on CPU only
     @section "init" begin
-        data = @section "alloc" ArmonDualData(params)
+        data = @section "alloc" BlockGrid(params)
         @section "init_test" begin
             init_test(params, data)
             wait(params)
@@ -298,9 +238,9 @@ function armon(params::ArmonParameters{T}) where T
     end
 
     stats = SolverStats(
-        params.time, dt, cycles, solve_time / 1e9, params.nx * params.ny, cells_per_sec,
+        params.time, dt, cycles, solve_time / 1e9, prod(params.N), cells_per_sec,
         params.return_data ? data : nothing,
-        params.measure_time ? copy(timer) : nothing
+        params.measure_time ? flatten_sections(timer, ("Inner blocks", "Edge blocks")) : nothing
     )
 
     if params.return_data || params.write_output || params.write_slices

@@ -1,7 +1,6 @@
 
 PROJECT_DIR = ..
 TEST_DIR = .
-PERF_REF_DIR = $(TEST_DIR)/performance_data
 DATA_REF_DIR = $(TEST_DIR)/reference_data
 
 MPI_PROCS ?= 25
@@ -15,7 +14,6 @@ JULIA ?= julia
 JULIA_ARGS ?= -O3 --check-bounds=no --project=$(PROJECT_DIR) -t $(JULIA_THREADS)
 
 main_test_file = $(TEST_DIR)/runtests.jl
-create_perf_ref_file = $(PERF_REF_DIR)/create_performance_reference.jl
 create_data_ref_file = $(DATA_REF_DIR)/create_references.jl
 
 
@@ -26,10 +24,7 @@ ifeq (test,$(firstword $(MAKECMDGOALS)))
 endif
 
 
-.PHONY: create_perf_reference create_solver_reference short perf mpi all
-
-create_perf_reference:
-	$(JULIA) $(JULIA_ARGS) $(create_perf_ref_file)
+.PHONY: create_solver_reference short perf mpi all
 
 create_solver_reference:
 	$(JULIA) $(JULIA_ARGS) $(create_data_ref_file)
