@@ -12,6 +12,8 @@ struct SolverStats
     final_time::Float64
     last_dt::Float64
     cycles::Int
+    solve_time::Float64  # in seconds
+    cell_count::Int
     giga_cells_per_sec::Float64
     data::Union{Nothing, BlockGrid}
     timer::Union{Nothing, TimerOutput}
@@ -23,7 +25,9 @@ function Base.show(io::IO, stats::SolverStats)
     println(io, " - final time:  ", @sprintf("%.18f", stats.final_time), " sec")
     println(io, " - last Δt:     ", @sprintf("%.18f", stats.last_dt), " sec")
     println(io, " - cycles:      ", stats.cycles)
-    println(io, " - performance: ", round(stats.giga_cells_per_sec * 1e3, digits=3), " ×10⁶ cells-cycles/sec")
+    println(io, " - performance: ",
+        round(stats.giga_cells_per_sec * 1e3, digits=3), " ×10⁶ cells-cycles/sec ",
+        "(", round(stats.solve_time, digits=3), " sec, ", stats.cell_count, " cells)")
     if !isnothing(stats.timer)
         println(io, "Steps time breakdown:")
         show(io, stats.timer; compact=false, allocations=true, sortby=:firstexec)
@@ -141,7 +145,7 @@ function time_loop(params::ArmonParameters, data::BlockGrid)
         end
     end
 
-    return params.next_cycle_dt, params.cycle, 1 / grind_time
+    return params.next_cycle_dt, params.cycle, 1 / grind_time, solve_time
 end
 
 
@@ -202,7 +206,7 @@ function armon(params::ArmonParameters{T}) where T
         end
     end
 
-    dt, cycles, cells_per_sec = time_loop(params, data)
+    dt, cycles, cells_per_sec, solve_time = time_loop(params, data)
 
     if params.check_result && is_conservative(params.test)
         @section "Conservation variables" begin
@@ -234,7 +238,7 @@ function armon(params::ArmonParameters{T}) where T
     end
 
     stats = SolverStats(
-        params.time, dt, cycles, cells_per_sec,
+        params.time, dt, cycles, solve_time / 1e9, params.nx * params.ny, cells_per_sec,
         params.return_data ? data : nothing,
         params.measure_time ? flatten_sections(timer, ("Inner blocks", "Edge blocks")) : nothing
     )

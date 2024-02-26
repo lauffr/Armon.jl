@@ -82,7 +82,7 @@ function uninit_vars_propagation(test, type; options...)
         end
     end
 
-    dt, cycles, _ = Armon.time_loop(ref_params, data)
+    dt, cycles, _, _ = Armon.time_loop(ref_params, data)
 
     ref_data = BlockGrid(ref_params)
     differences_count, max_diff = compare_with_reference_data(
