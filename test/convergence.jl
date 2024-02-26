@@ -45,8 +45,8 @@ function axis_invariance(test::Symbol, type::Type, axis::Axis; options...)
         real_blk_size = Armon.real_block_size(bsize)
         real_blk_range = (.+).(Base.oneto.(real_blk_size), Armon.ghosts(bsize))
 
-        r        = ntuple(i -> i == Int(axis) ? real_blk_size[i][1:end-1] : Colon(), ndims(bsize))
-        r_offset = ntuple(i -> i == Int(axis) ? real_blk_size[i][2:end]   : Colon(), ndims(bsize))
+        r        = ntuple(i -> i == Int(axis) ? (1:real_blk_size[i]-1) : Colon(), ndims(bsize))
+        r_offset = ntuple(i -> i == Int(axis) ? (2:real_blk_size[i])   : Colon(), ndims(bsize))
 
         for var in vars
             v_data = getfield(blk, var)

@@ -238,7 +238,7 @@ function armon(params::ArmonParameters{T}) where T
     end
 
     stats = SolverStats(
-        params.time, dt, cycles, solve_time / 1e9, params.nx * params.ny, cells_per_sec,
+        params.time, dt, cycles, solve_time / 1e9, prod(params.N), cells_per_sec,
         params.return_data ? data : nothing,
         params.measure_time ? flatten_sections(timer, ("Inner blocks", "Edge blocks")) : nothing
     )

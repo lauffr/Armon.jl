@@ -5,3 +5,4 @@
 /.kokkos-build
 Manifest.toml
 LocalPreferences.toml
+/utils
