@@ -2,10 +2,7 @@
 """
     BlockGrid{DeviceA, HostA, BufferA, Ghost, BlockSize, Device}
 
-Stores [`TaskBlock`](@ref)s on the `Device` and host memory.
-
-`DeviceA` and `HostA` are `AbstractArray` types for the device and host respectively.
-If `DeviceA == HostA`, then `device_blocks === host_blocks`.
+Stores [`TaskBlock`](@ref)s on the `Device` and host memory, in a grid.
 
 [`LocalTaskBlock`](@ref) are stored separately depending on if they have a [`StaticBSize`](@ref) of
 `BlockSize` (in `device_blocks` and `host_blocks`) or if they have a [`DynamicBSize`](@ref) (in
@@ -13,7 +10,10 @@ If `DeviceA == HostA`, then `device_blocks === host_blocks`.
 
 Blocks have `Ghost` cells padding their real cells. This is included in their [`block_size`](@ref).
 
-`BufferA` is the type of storage used for MPI buffers. MPI buffer are homogenous: they are either
+`DeviceA` and `HostA` are `AbstractArray` types for the device and host respectively.
+If `DeviceA == HostA`, then `device_blocks === host_blocks`.
+
+`BufferA` is the type of storage used for MPI buffers. MPI buffers are homogenous: they are either
 all on the host or all on the device.
 """
 struct BlockGrid{
@@ -347,7 +347,22 @@ Simple iterator over all host blocks.
 host_blocks(grid::BlockGrid) = Iterators.flatten((grid.host_blocks, grid.host_edge_blocks))
 
 
+"""
+    device_is_host(::BlockGrid{D, H})
+    device_is_host(::Type{<:BlockGrid{D, H}})
+
+`true` if the device is the host, i.e. device blocks and host blocks are the same (and `D == H`).
+"""
 device_is_host(::ObjOrType{BlockGrid{D, H}}) where {D, H} = D === H
+
+
+"""
+    buffers_on_device(::BlockGrid)
+    buffers_on_device(::Type{<:BlockGrid})
+
+`true` if the communication buffers are stored on the device, allowing direct transfers without
+passing through the host (GPU-aware communication).
+"""
 buffers_on_device(::ObjOrType{BlockGrid{D, H, B}}) where {D, H, B} = D === B
 
 
@@ -462,12 +477,23 @@ memory_required(N::Tuple, block_size::Tuple, ghost::Int, ::Type{T}) where {T} =
 device_to_host!(::BlockGrid{D, D}) where {D} = nothing
 host_to_device!(::BlockGrid{D, D}) where {D} = nothing
 
+"""
+    device_to_host!(grid::BlockGrid)
+
+Copies all device data to the host blocks. A no-op if the device is the host.
+"""
 function device_to_host!(grid::BlockGrid{D, H}) where {D, H}
     for (host_blk, dev_blk) in zip(host_blocks(grid), device_blocks(grid))
         copyto!(host_blk, dev_blk)
     end
 end
 
+
+"""
+    device_to_host!(grid::BlockGrid)
+
+Copies all host data to the device blocks. A no-op if the device is the host.
+"""
 function host_to_device!(grid::BlockGrid{D, H}) where {D, H}
     for (dev_blk, host_blk) in zip(device_blocks(grid), host_blocks(grid))
         copyto!(dev_blk, host_blk)

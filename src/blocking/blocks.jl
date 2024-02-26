@@ -1,4 +1,9 @@
 
+"""
+    TaskBlock{V}
+
+Abstract block used for cache blocking.
+"""
 abstract type TaskBlock{V <: AbstractArray} end
 
 array_type(::TaskBlock{V}) where {V} = V
@@ -6,7 +11,7 @@ Base.eltype(::TaskBlock{V}) where {V} = eltype(V)
 
 
 """
-    LocalTaskBlock{V, Size}
+    LocalTaskBlock{V, Size} <: TaskBlock{V}
 
 Container of `Size` and variables of type `V`, part of a [`BlockGrid`](@ref). One block can run all
 solver steps independantly of all other blocks, apart from those which require updating ghost cells.
@@ -96,6 +101,12 @@ function Base.copyto!(dst_blk::LocalTaskBlock{A, Size}, src_blk::LocalTaskBlock{
 end
 
 
+"""
+    device_to_host!(blk::LocalTaskBlock)
+
+Copies the device data of `blk` to its host mirror. `blk` can be the device or host block.
+A no-op if the device is the host.
+"""
 function device_to_host!(blk::LocalTaskBlock)
     blk === blk.mirror && return  # device is host
 
@@ -108,6 +119,12 @@ function device_to_host!(blk::LocalTaskBlock)
 end
 
 
+"""
+    device_to_host!(blk::LocalTaskBlock)
+
+Copies the host data of `blk` to its device mirror. `blk` can be the device or host block.
+A no-op if the device is the host.
+"""
 function host_to_device!(blk::LocalTaskBlock)
     blk === blk.mirror && return  # device is host
 
@@ -132,7 +149,7 @@ end
 #
 
 """
-    RemoteTaskBlock{B}
+    RemoteTaskBlock{B} <: TaskBlock{B}
 
 Block located at the border of a [`BlockGrid`](@ref), containing MPI buffer of type `B` for
 communication with other [`BlockGrid`](@ref)s.

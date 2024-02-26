@@ -29,10 +29,13 @@ function connect_ranges(r1::OrdinalRange, r2::OrdinalRange)
     return first(r1):step(r1):last(r2)
 end
 
-#
-# DomainRange: Two dimensional range to index a 2D array stored with contiguous rows
-#
 
+"""
+    DomainRange
+    
+Two dimensional range to index a 2D array stored with contiguous rows.
+Not equivalent to `CartesianIndices` as it handles `StepRange`s properly.
+"""
 struct DomainRange
     col::StepRange{Int, Int}
     row::StepRange{Int, Int}
