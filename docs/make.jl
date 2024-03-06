@@ -1,6 +1,8 @@
 using Armon
 using Documenter
 
+CI = get(ENV, "CI", "false") == "true"
+
 DocMeta.setdocmeta!(Armon, :DocTestSetup, :(using Armon); recursive=true)
 
 makedocs(;
@@ -9,7 +11,7 @@ makedocs(;
     repo=Remotes.GitHub("Keluaa", "Armon.jl"),
     sitename="Armon.jl",
     format=Documenter.HTML(;
-        prettyurls=get(ENV, "CI", "false") == "true",
+        prettyurls=CI,
         edit_link="main",
         assets=String[],
     ),
@@ -17,3 +19,10 @@ makedocs(;
         "Home" => "index.md",
     ],
 )
+
+if CI
+    deploydocs(
+        repo = "github.com/Keluaa/Armon.jl.git",
+        push_preview = true
+    )
+end
