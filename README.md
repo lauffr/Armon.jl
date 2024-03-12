@@ -4,9 +4,9 @@
 [![Build Status](https://github.com/Keluaa/Armon.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/Keluaa/Armon.jl/actions/workflows/CI.yml?query=branch%3Amain)
 [![Coverage](https://codecov.io/gh/Keluaa/Armon.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/Keluaa/Armon.jl)
 
-Armon.jl is an experimental 2D CFD solver for compressible non-viscous fluids, using the finite volume method.
+Armon.jl is an experimental 2D CFD solver for compressible non-viscous fluids, using a finite volume method.
 
-It was made to explore Julia's capabilities in HPC and for performance portability: it should
+It was developed to explore Julia's capabilities in HPC and for performance portability: it should
 perform very well on any CPU (tested on Nvidia Grace CPU, AMD Milan 7763, Intel Skylake Xeon Platinum 8168...)
 and GPU (tested on Nvidia A100, AMD MI250, Intel Max 1100...) without any additional configuration.
 Domain decomposition is done using MPI, and cache-blocking is performed in a single process for
@@ -33,7 +33,7 @@ Parameters are detailed in the help of `ArmonParameters`.
 ```julia
 julia> using Armon
 
-julia> params = ArmonParameters(options...);
+julia> params = ArmonParameters(use_MPI=false, options...);
 
 julia> armon(params);  # Run the solver
 ```
