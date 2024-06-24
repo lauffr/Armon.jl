@@ -355,21 +355,6 @@ function armon(params::ArmonParameters{T}) where T
         print_parameters(params)
     end
 
-    if params.use_MPI && silent < 3
-        (; rank, proc_size, cart_coords) = params
-
-        # Local info
-        node_local_comm = MPI.Comm_split_type(params.global_comm, MPI.COMM_TYPE_SHARED, rank)
-        local_rank = MPI.Comm_rank(node_local_comm)
-        local_size = MPI.Comm_size(node_local_comm)
-
-        is_root && println("\nProcesses info:")
-        rank > 0 && MPI.Recv(Bool, rank-1, 1, params.global_comm)
-        @printf(" - %2d/%-2d, local: %2d/%-2d, coords: (%2d,%-2d), cores: %3d to %3d\n", 
-            rank, proc_size, local_rank, local_size, cart_coords[1], cart_coords[2], 
-            minimum(getcpuids()), maximum(getcpuids()))
-        rank < proc_size-1 && MPI.Send(true, rank+1, 1, params.global_comm)
-    end
 
     if is_root && params.animation_step != 0
         if isdir("anim")
@@ -444,7 +429,7 @@ function armon(params::ArmonParameters{T}) where T
     params.write_output && write_sub_domain_file(params, data, params.output_file)
     params.write_slices && write_slices_files(params, data, params.output_file)
 
-    if params.measure_time && params.silent < 3 && !isinteractive()
+    if params.is_root && params.measure_time && params.silent < 3 && !isinteractive()
         show(params.timer)
         println()
     end

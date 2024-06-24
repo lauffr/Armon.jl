@@ -244,7 +244,10 @@ function start_exchange(
     wait(params)  # Wait for the copy to complete
 
     # TODO: use RMA with processes local to the node.
-    MPI.Startall(other_blk.requests)
+    @section "comms" begin
+        MPI.Startall(other_blk.requests)
+        MPI.Waitall(other_blk.requests)
+    end
 
     return false
 end

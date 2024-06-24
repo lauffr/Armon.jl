@@ -1,3 +1,8 @@
+struct SubdomainSideBuffer{BufferArray}
+    to_send    :: BufferArray
+    to_recv    :: BufferArray
+    block_count :: Atomic{Int64}
+end
 
 """
     BlockGrid{T, DeviceA, HostA, BufferA, Ghost, BlockSize, Device, SolverState}
@@ -29,15 +34,16 @@ struct BlockGrid{
     SState      <: SolverState,
     Device
 }
-    grid_size          :: NTuple{2, Int}  # Size of the grid, including all local blocks
-    static_sized_grid  :: NTuple{2, Int}  # Size of the grid of statically sized local blocks
-    cell_size          :: NTuple{2, Int}  # Number of real cells in each direction
-    edge_size          :: NTuple{2, Int}  # Number of real cells in edge blocks in each direction (only along non-edge directions)
-    device             :: Device
-    global_dt          :: GlobalTimeStep{T}
-    blocks             :: Vector{LocalTaskBlock{DeviceArray, HostArray, BS, SState}}
-    edge_blocks        :: Vector{LocalTaskBlock{DeviceArray, HostArray, DynamicBSize{Ghost}, SState}}
-    remote_blocks      :: Vector{RemoteTaskBlock{BufferArray}}
+    grid_size             :: NTuple{2, Int}  # Size of the grid, including all local blocks
+    static_sized_grid     :: NTuple{2, Int}  # Size of the grid of statically sized local blocks
+    cell_size             :: NTuple{2, Int}  # Number of real cells in each direction
+    edge_size             :: NTuple{2, Int}  # Number of real cells in edge blocks in each direction (only along non-edge directions)
+    device                :: Device
+    global_dt             :: GlobalTimeStep{T}
+    blocks                :: Vector{LocalTaskBlock{DeviceArray, HostArray, BS, SState}}
+    edge_blocks           :: Vector{LocalTaskBlock{DeviceArray, HostArray, DynamicBSize{Ghost}, SState}}
+    remote_blocks         :: Vector{RemoteTaskBlock{BufferArray}}
+    mpi_subdomain_buffers :: Neighbours{SubdomainSideBuffer{BufferArray}}
 end
 
 
@@ -71,6 +77,30 @@ function BlockGrid(params::ArmonParameters{T}) where {T}
     grid_perimeter = sum(grid_size) * length(grid_size)  # (nx+ny) * 2
     remote_blocks = Vector{RemoteTaskBlock{buffer_array}}(undef, grid_perimeter)
 
+    # MPI buffers used for the isend/irecv operations, 2 buffers per side
+    mpi_subdomain_buffers = Neighbours{SubdomainSideBuffer{buffer_array}}((
+        SubdomainSideBuffer{buffer_array}( # left
+            buffer_array(undef, params.N[Integer(Axis.Y)] * ghost),
+            buffer_array(undef, params.N[Integer(Axis.Y)] * ghost),
+            Atomic{Int64}(0)
+        ),
+        SubdomainSideBuffer{buffer_array}( # right
+            buffer_array(undef, params.N[Integer(Axis.Y)] * ghost),
+            buffer_array(undef, params.N[Integer(Axis.Y)] * ghost),
+            Atomic{Int64}(0)
+        ),
+        SubdomainSideBuffer{buffer_array}( # bottom
+            buffer_array(undef, params.N[Integer(Axis.X)] * ghost),
+            buffer_array(undef, params.N[Integer(Axis.X)] * ghost),
+            Atomic{Int64}(0)
+        ),
+        SubdomainSideBuffer{buffer_array}( # top
+            buffer_array(undef, params.N[Integer(Axis.X)] * ghost),
+            buffer_array(undef, params.N[Integer(Axis.X)] * ghost),
+            Atomic{Int64}(0)
+        )
+    ))
+
     # Main grid container
     edge_size = remainder_block_size .- 2*ghost
     grid = BlockGrid{
@@ -79,7 +109,7 @@ function BlockGrid(params::ArmonParameters{T}) where {T}
         state_type, typeof(params.device)
     }(
         grid_size, static_sized_grid, cell_size, edge_size, params.device, global_dt,
-        blocks, edge_blocks, remote_blocks
+        blocks, edge_blocks, remote_blocks, mpi_subdomain_buffers
     )
 
     # Allocate all local blocks
