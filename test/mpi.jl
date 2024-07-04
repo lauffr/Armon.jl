@@ -301,7 +301,7 @@ end
 
 
 function test_halo_exchange(P, global_comm)
-    ref_params = ref_params_for_sub_domain(:DebugIndexes, Float64, P; N=(100, 100), global_comm)
+    ref_params = ref_params_for_sub_domain(:DebugIndexes, Float64, P; N=(100, 100), global_comm, comm_grouping=false)
     block_grid = BlockGrid(ref_params)
     coords = ref_params.cart_coords
 

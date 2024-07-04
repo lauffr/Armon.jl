@@ -1,3 +1,11 @@
+struct SubdomainSideBuffer{BufferArray}
+    to_send     :: MPI.Buffer{BufferArray}
+    to_recv     :: MPI.Buffer{BufferArray}
+    # requests[1] is the send request, requests[2] the receive request
+    requests    :: MPI.UnsafeMultiRequest
+    block_count :: Atomic{Int}
+    max_blocks  :: Int
+end
 
 """
     TaskBlock{V}
@@ -162,13 +170,14 @@ Block located at the border of a [`BlockGrid`](@ref), containing MPI buffer of t
 communication with other [`BlockGrid`](@ref)s.
 """
 mutable struct RemoteTaskBlock{B} <: TaskBlock{B}
-    pos        :: CartesianIndex{2}  # Position in the local block grid
-    neighbour  :: LocalTaskBlock     # Remote blocks are on the edges of the sub-domain: there can only be one real neighbour
-    rank       :: Int                # `-1` if the remote block has no MPI rank to communicate with
-    global_pos :: CartesianIndex{2}  # Rank position in the Cartesian process grid
-    send_buf   :: MPI.Buffer{B}
-    recv_buf   :: MPI.Buffer{B}
-    requests   :: MPI.UnsafeMultiRequest
+    pos              :: CartesianIndex{2}  # Position in the local block grid
+    neighbour        :: LocalTaskBlock     # Remote blocks are on the edges of the sub-domain: there can only be one real neighbour
+    rank             :: Int                # `-1` if the remote block has no MPI rank to communicate with
+    global_pos       :: CartesianIndex{2}  # Rank position in the Cartesian process grid
+    send_buf         :: Union{MPI.Buffer{B}, SubArray}
+    recv_buf         :: Union{MPI.Buffer{B}, SubArray}
+    subdomain_buffer :: SubdomainSideBuffer
+    requests         :: MPI.UnsafeMultiRequest
 
     function RemoteTaskBlock{B}(size, pos, rank, global_pos, comm) where {B}
         # `neighbour` is set afterwards, when all blocks are created.
@@ -180,6 +189,17 @@ mutable struct RemoteTaskBlock{B} <: TaskBlock{B}
         block.requests = MPI.UnsafeMultiRequest(2)  # We always keep a reference to the buffers, therefore it is safe
         MPI.Send_init(block.send_buf, comm, block.requests[1]; dest=rank)
         MPI.Recv_init(block.recv_buf, comm, block.requests[2]; source=rank)
+        return block
+    end
+
+    function RemoteTaskBlock{B}(size, pos, rank, global_pos, comm, view_on_send_buffer, view_on_recv_buffer, subdomain_buffer) where {B}
+        # `neighbour` is set afterwards, when all blocks are created.
+        block = new{B}(pos)
+        block.rank = rank
+        block.global_pos = global_pos
+        block.send_buf = view_on_send_buffer
+        block.recv_buf = view_on_recv_buffer
+        block.subdomain_buffer = subdomain_buffer
         return block
     end
 
