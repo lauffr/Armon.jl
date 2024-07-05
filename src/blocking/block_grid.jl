@@ -202,41 +202,37 @@ function BlockGrid(params::ArmonParameters{T}) where {T}
 
     # Allocate all remote blocks
     remote_i = 1
-    for (side, edge_positions) in RemoteBlockRegions(grid_size)
-        # comm_grouping only : first spot in the MPI buffer that isn't assigned to a block yet
-        data_count = 1
-        for pos in edge_positions
-            # Position of the neighbouring block in the grid
-            local_pos = pos + CartesianIndex(offset_to(opposite_of(side)))
+    for (side, edge_positions) in RemoteBlockRegions(grid_size), pos in edge_positions
+        # Position of the neighbouring block in the grid
+        local_pos = pos + CartesianIndex(offset_to(opposite_of(side)))
 
-            if has_neighbour(params, side)
-                # The buffer must be the same size as the side of our block which is a neighbour to...
-                buffer_size = real_face_size(block_at(grid, local_pos).size, side)
-                # ...for each variable to communicate of each ghost cell
-                buffer_size *= length(comm_vars()) * params.nghost
+        if has_neighbour(params, side)
+            # The buffer must be the same size as the side of our block which is a neighbour to...
+            buffer_size = real_face_size(block_at(grid, local_pos).size, side)
+            # ...for each variable to communicate of each ghost cell
+            buffer_size *= length(comm_vars()) * params.nghost
 
-                neighbour = neighbour_at(params, side)  # rank
-                global_pos = CartesianIndex(params.cart_coords .+ offset_to(side))  # pos in the cart_comm
+            neighbour = neighbour_at(params, side)  # rank
+            global_pos = CartesianIndex(params.cart_coords .+ offset_to(side))  # pos in the cart_comm
 
-                if params.comm_grouping
-                    # Creating the views on the MPI buffer. Cells are serialized indentically no matter the side
-                    side_buffer = mpi_subdomain_buffers[Int(side)]
-                    view_on_send_buffer = @view side_buffer.to_send.data[data_count : (data_count + buffer_size - 1)]
-                    view_on_recv_buffer = @view side_buffer.to_recv.data[data_count : (data_count + buffer_size - 1)]
-                    block = RemoteTaskBlock{buffer_array}(buffer_size, pos, neighbour, global_pos, params.cart_comm, view_on_send_buffer, view_on_recv_buffer, side_buffer)
-                    # Buffer_size is the number of spots now assigned to the newly created block, moving the index of non-assigned spots
-                    data_count += buffer_size
-                else
-                    block = RemoteTaskBlock{buffer_array}(buffer_size, pos, neighbour, global_pos, params.cart_comm)
-                end
+            if params.comm_grouping
+                # Creating the views on the MPI buffer. Cells are serialized indentically no matter the side
+                # each block gets a slice of the buffer of the form [offset:offset+size-1] (offset is position-dependent)
+                offset = 1 + real_face_size(static_size, side) * ghost * length(comm_vars()) * (pos[Int(next_axis(axis_of(side)))] - 1)
+                side_buffer = mpi_subdomain_buffers[Int(side)]
+                view_on_send_buffer = @view side_buffer.to_send.data[offset : (offset + buffer_size - 1)]
+                view_on_recv_buffer = @view side_buffer.to_recv.data[offset : (offset + buffer_size - 1)]
+                block = RemoteTaskBlock{buffer_array}(buffer_size, pos, neighbour, global_pos, params.cart_comm, view_on_send_buffer, view_on_recv_buffer, side_buffer)
             else
-                # "Fake" remote block for non-existant neighbour at the edge of the global domain
-                block = RemoteTaskBlock{buffer_array}(pos)
+                block = RemoteTaskBlock{buffer_array}(buffer_size, pos, neighbour, global_pos, params.cart_comm)
             end
-
-            remote_blocks[remote_i] = block
-            remote_i += 1
+        else
+            # "Fake" remote block for non-existant neighbour at the edge of the global domain
+            block = RemoteTaskBlock{buffer_array}(pos)
         end
+
+        remote_blocks[remote_i] = block
+        remote_i += 1
     end
 
     # Initialize all block neighbours references and exchanges
