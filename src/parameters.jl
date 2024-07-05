@@ -40,6 +40,13 @@ Store MPI buffers on the device. This requires to use a GPU-aware MPI implementa
 when using the CPU only.
 
 
+    comm_grouping = true
+
+Use two MPI buffers (send/receive) per side of the subdomain instead of two per block on the
+frontier of the subdomain. It aims at reducing the overhead of latency due to sending too many
+messages. 
+
+
 ## Kernels
 
     use_threading = true, use_simd = true
