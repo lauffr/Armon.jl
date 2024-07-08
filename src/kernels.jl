@@ -198,10 +198,13 @@ function init_test(params::ArmonParameters, blk::LocalTaskBlock)
         params.lock_memory && lock_pages(blk)
 
         # Do the exact same with the MPI buffers associated with the block
-        for neighbour in blk.neighbours
-            !(neighbour isa RemoteTaskBlock) && continue
-            move_pages(neighbour, target_numa_node)
-            params.lock_memory && lock_pages(neighbour)
+        # (only if MPI buffers are not shared among multiple blocks)
+        if !(params.comm_grouping)
+            for neighbour in blk.neighbours
+                !(neighbour isa RemoteTaskBlock) && continue
+                move_pages(neighbour, target_numa_node)
+                params.lock_memory && lock_pages(neighbour)
+            end
         end
     end
 end

@@ -52,6 +52,13 @@ This effectively enforces the *first-touch* policy, instead of blindly relying o
 Lock all memory pages using `mlock` to RAM.
 
 
+    comm_grouping = true
+
+Use two MPI buffers (send/receive) per side of the subdomain instead of two per block on the
+frontier of the subdomain. It aims at reducing the overhead of latency due to sending too many
+messages. 
+
+
 ## Kernels
 
     use_threading = true, use_simd = true
@@ -337,6 +344,7 @@ mutable struct ArmonParameters{Flt_T, Device, DeviceParams}
     global_grid::NTuple{2, Int}  # Dimensions of the global grid
     reorder_grid::Bool
     gpu_aware::Bool
+    comm_grouping::Bool
 
     # Tests & Comparison
     compare::Bool
@@ -406,7 +414,7 @@ end
 
 
 function init_MPI(params::ArmonParameters;
-    use_MPI = true, P = (1, 1), reorder_grid = true, global_comm = nothing, gpu_aware = true,
+    use_MPI = true, P = (1, 1), reorder_grid = true, global_comm = nothing, gpu_aware = true, comm_grouping = true,
     options...
 )
     global_comm = something(global_comm, MPI.COMM_WORLD)
@@ -419,6 +427,7 @@ function init_MPI(params::ArmonParameters;
     params.use_MPI = use_MPI
     params.reorder_grid = reorder_grid
     params.gpu_aware = gpu_aware
+    params.comm_grouping = comm_grouping
 
     if use_MPI
         !MPI.Initialized() && solver_error(:config, "'use_MPI=true' but MPI has not yet been initialized")

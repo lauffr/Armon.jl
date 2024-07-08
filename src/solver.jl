@@ -191,9 +191,15 @@ function stop_busy_waiting(params::ArmonParameters, grid::BlockGrid, first_waiti
         blk = block_at(grid, first_waiting_block)
         for neighbour in blk.neighbours
             !(neighbour isa RemoteTaskBlock) && continue
-            MPI.Testall(neighbour.requests) && continue
-            # Only wait for a single side, expecting that once one is done, there is more work to do.
-            MPI.Waitall(neighbour.requests)
+            neighbour.rank == -1 && continue
+            if params.comm_grouping
+                MPI.Testall(neighbour.subdomain_buffer.requests) && continue
+                # Only wait for a single side, expecting that once one is done, there is more work to do.
+                MPI.Waitall(neighbour.subdomain_buffer.requests)
+            else
+                MPI.Testall(neighbour.requests) && continue
+                MPI.Waitall(neighbour.requests)
+            end
             return time_ns() - wait_start, true
         end
     end

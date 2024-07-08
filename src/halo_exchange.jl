@@ -185,7 +185,7 @@ end
 
 
 @generic_kernel function pack_to_array!(
-    bsize::BlockSize, side::Side.T, array::V, vars::NTuple{N, V}
+    bsize::BlockSize, side::Side.T, array, vars::NTuple{N, V}
 ) where {N, V}
     idx = @index_2D_lin()
     itr = @iter_idx()
@@ -201,7 +201,7 @@ end
 
 
 @generic_kernel function unpack_from_array!(
-    bsize::BlockSize, side::Side.T, array::V, vars::NTuple{N, V}
+    bsize::BlockSize, side::Side.T, array, vars::NTuple{N, V}
 ) where {N, V}
     idx = @index_2D_lin()
     itr = @iter_idx()
@@ -239,12 +239,36 @@ function start_exchange(
     send_domain = border_domain(blk.size, side; single_strip=false)
     vars = comm_vars(blk; on_device=buffer_are_on_device)
     # TODO: run on host if `D != B`, or perform it on the device on a tmp array
-    pack_to_array!(params, send_domain, blk.size, side, other_blk.send_buf.data, vars)
+    if params.comm_grouping # send_buf is a view on the MPI buffer's data array
+        pack_to_array!(params, send_domain, blk.size, side, other_blk.send_buf, vars)
+    else # send_buf is an MPI buffer
+        pack_to_array!(params, send_domain, blk.size, side, other_blk.send_buf.data, vars)
+    end
 
     wait(params)  # Wait for the copy to complete
 
-    # TODO: use RMA with processes local to the node.
-    MPI.Startall(other_blk.requests)
+    if params.comm_grouping
+        number_of_blocks_done = (@atomic other_blk.subdomain_buffer.block_count.x += 1)
+        if number_of_blocks_done == other_blk.subdomain_buffer.max_blocks # the buffer is filled
+            MPI.Wait(other_blk.subdomain_buffer.requests[1]) # necessary synchronisation
+            MPI.Start(other_blk.subdomain_buffer.requests[1]) # send
+            @atomic other_blk.subdomain_buffer.block_count.x = 0 # reset
+        end
+        if number_of_blocks_done == 1 # this is bad (i think there's a way of doing this earlier)
+            MPI.Start(other_blk.subdomain_buffer.requests[2]) # receive
+        end
+    else
+        # TODO: use RMA with processes local to the node.
+        MPI.Startall(other_blk.requests)
+
+        # very brutal way to benchmark the time wasted in communications (always yields more time than in real situations, as communications are non-blocking and covered with computing in real situations)
+        #=
+        @section "comms" begin
+            MPI.Startall(other_blk.requests)
+            MPI.Waitall(other_blk.requests)
+        end
+        =#
+    end
 
     return false
 end
@@ -266,13 +290,21 @@ function finish_exchange(
     blk::LocalTaskBlock{D, H}, other_blk::RemoteTaskBlock{B}, side::Side.T
 ) where {D, H, B}
     # Finish the exchange between one local block and a remote block from another sub-domain
-    !MPI.Testall(other_blk.requests) && return false  # Still waiting
+    if params.comm_grouping
+        !MPI.Test(other_blk.subdomain_buffer.requests[2]) && return false  # Still waiting
+    else
+        !MPI.Testall(other_blk.requests) && return false  # Still waiting
+    end
 
     recv_domain = ghost_domain(blk.size, side; single_strip=false)
     buffer_are_on_device = D == B
     vars = comm_vars(blk; on_device=buffer_are_on_device)
     # TODO: run on host if `D != B`
-    unpack_from_array!(params, recv_domain, blk.size, side, other_blk.recv_buf.data, vars)
+    if params.comm_grouping
+        unpack_from_array!(params, recv_domain, blk.size, side, other_blk.recv_buf, vars)
+    else
+        unpack_from_array!(params, recv_domain, blk.size, side, other_blk.recv_buf.data, vars)
+    end
 
     if !buffer_are_on_device
         # MPI buffers are not where we want the data to be. Retreive the result of the exchange.
@@ -283,6 +315,7 @@ function finish_exchange(
 end
 
 
+# TODO : grouping comms
 function block_ghost_exchange(
     params::ArmonParameters, state::SolverState,
     blk::LocalTaskBlock{D, H}, other_blk::RemoteTaskBlock{B}, side::Side.T
@@ -293,7 +326,9 @@ function block_ghost_exchange(
         return BlockExchangeState.Done
     end
 
+    # blk.exchanges::Neighbours{BlockInterface}, bint::BlockInterface
     bint = blk.exchanges[Int(side)]
+    # bint_state will be BlockExchangeState.{NotReady,InProgress,Done}
     bint_state = block_interface_state(bint)[1]
 
     # Exchange between one local block and a remote block from another sub-domain

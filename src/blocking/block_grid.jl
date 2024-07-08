@@ -1,4 +1,3 @@
-
 """
     BlockGrid{T, DeviceA, HostA, BufferA, Ghost, BlockSize, Device, SolverState}
 
@@ -29,17 +28,18 @@ struct BlockGrid{
     SState      <: SolverState,
     Device
 }
-    grid_size          :: NTuple{2, Int}  # Size of the grid, including all local blocks
-    static_sized_grid  :: NTuple{2, Int}  # Size of the grid of statically sized local blocks
-    cell_size          :: NTuple{2, Int}  # Number of real cells in each direction
-    edge_size          :: NTuple{2, Int}  # Number of real cells in edge blocks in each direction (only along non-edge directions)
-    device             :: Device
-    global_dt          :: GlobalTimeStep{T}
-    blocks             :: Vector{LocalTaskBlock{DeviceArray, HostArray, BS, SState}}
-    edge_blocks        :: Vector{LocalTaskBlock{DeviceArray, HostArray, DynamicBSize{Ghost}, SState}}
-    remote_blocks      :: Vector{RemoteTaskBlock{BufferArray}}
-    threads_workload   :: Vector{Vector{CartesianIndex{2}}}  # `tid => block index` map for all threads, distributing each block to each thread
-    threads_logs       :: Vector{Vector{ThreadLogEvent}}
+    grid_size             :: NTuple{2, Int}  # Size of the grid, including all local blocks
+    static_sized_grid     :: NTuple{2, Int}  # Size of the grid of statically sized local blocks
+    cell_size             :: NTuple{2, Int}  # Number of real cells in each direction
+    edge_size             :: NTuple{2, Int}  # Number of real cells in edge blocks in each direction (only along non-edge directions)
+    device                :: Device
+    global_dt             :: GlobalTimeStep{T}
+    blocks                :: Vector{LocalTaskBlock{DeviceArray, HostArray, BS, SState}}
+    edge_blocks           :: Vector{LocalTaskBlock{DeviceArray, HostArray, DynamicBSize{Ghost}, SState}}
+    remote_blocks         :: Vector{RemoteTaskBlock{BufferArray}}
+    mpi_subdomain_buffers :: Neighbours{Union{SubdomainSideBuffer{BufferArray}, Nothing}} # only used when comm_grouping=true
+    threads_workload      :: Vector{Vector{CartesianIndex{2}}}  # `tid => block index` map for all threads, distributing each block to each thread
+    threads_logs          :: Vector{Vector{ThreadLogEvent}}
 end
 
 
@@ -82,6 +82,98 @@ function BlockGrid(params::ArmonParameters{T}) where {T}
         return logs
     end
 
+    # MPI buffers used for the isend/irecv operations (comm_grouping only), 2 buffers per side
+    # access using block_grid.mpi_subdomain_buffers.{left,right,bottom,top}.{to_send,to_recv,requests,block_count}
+    if params.comm_grouping
+        if has_neighbour(params, Side.Left)
+            left_buffer = SubdomainSideBuffer{buffer_array}(
+                MPI.Buffer(buffer_array(undef, params.N[Int(Axis.Y)] * ghost * length(comm_vars()))), # to_send
+                MPI.Buffer(buffer_array(undef, params.N[Int(Axis.Y)] * ghost * length(comm_vars()))), # to_recv
+                MPI.UnsafeMultiRequest(2),                                                            # requests
+                Atomic{Int}(0),                                                                       # block_count
+                grid_size[Int(Axis.Y)]
+            )
+            # rule : the tag of a communication is the side index (from sender point of view)
+            MPI.Send_init(left_buffer.to_send, params.cart_comm, left_buffer.requests[1];
+                dest = neighbour_at(params, Side.Left),
+                tag = Int(Side.Left)
+            )
+            MPI.Recv_init(left_buffer.to_recv, params.cart_comm, left_buffer.requests[2];
+                source = neighbour_at(params, Side.Left),
+                # a receive from the left subdomain is sent from the right of said subdomain
+                tag = Int(Side.Right)
+            )
+        else
+            left_buffer = nothing
+        end
+
+        if has_neighbour(params, Side.Right)
+            right_buffer = SubdomainSideBuffer{buffer_array}(
+                MPI.Buffer(buffer_array(undef, params.N[Int(Axis.Y)] * ghost * length(comm_vars()))),
+                MPI.Buffer(buffer_array(undef, params.N[Int(Axis.Y)] * ghost * length(comm_vars()))),
+                MPI.UnsafeMultiRequest(2),
+                Atomic{Int}(0),
+                grid_size[Int(Axis.Y)]
+            )
+            MPI.Send_init(right_buffer.to_send, params.cart_comm, right_buffer.requests[1];
+                dest = neighbour_at(params, Side.Right),
+                tag = Int(Side.Right)
+            )
+            MPI.Recv_init(right_buffer.to_recv, params.cart_comm, right_buffer.requests[2];
+                source = neighbour_at(params, Side.Right),
+                tag = Int(Side.Left)
+            )
+        else
+            right_buffer = nothing
+        end
+
+        if has_neighbour(params, Side.Bottom)
+            bottom_buffer = SubdomainSideBuffer{buffer_array}(
+                MPI.Buffer(buffer_array(undef, params.N[Int(Axis.X)] * ghost * length(comm_vars()))),
+                MPI.Buffer(buffer_array(undef, params.N[Int(Axis.X)] * ghost * length(comm_vars()))),
+                MPI.UnsafeMultiRequest(2),
+                Atomic{Int}(0),
+                grid_size[Int(Axis.X)]
+            )
+            MPI.Send_init(bottom_buffer.to_send, params.cart_comm, bottom_buffer.requests[1];
+                dest = neighbour_at(params, Side.Bottom),
+                tag = Int(Side.Bottom)
+            )
+            MPI.Recv_init(bottom_buffer.to_recv, params.cart_comm, bottom_buffer.requests[2];
+                source = neighbour_at(params, Side.Bottom),
+                tag = Int(Side.Top)
+            )
+        else
+            bottom_buffer = nothing
+        end
+
+        if has_neighbour(params, Side.Top)
+            top_buffer = SubdomainSideBuffer{buffer_array}(
+                MPI.Buffer(buffer_array(undef, params.N[Int(Axis.X)] * ghost * length(comm_vars()))),
+                MPI.Buffer(buffer_array(undef, params.N[Int(Axis.X)] * ghost * length(comm_vars()))),
+                MPI.UnsafeMultiRequest(2),
+                Atomic{Int}(0),
+                grid_size[Int(Axis.X)]
+            )
+            MPI.Send_init(top_buffer.to_send, params.cart_comm, top_buffer.requests[1];
+                dest = neighbour_at(params, Side.Top),
+                tag = Int(Side.Top)
+            )
+            MPI.Recv_init(top_buffer.to_recv, params.cart_comm, top_buffer.requests[2];
+                source = neighbour_at(params, Side.Top),
+                tag = Int(Side.Bottom)
+            )
+        else
+            top_buffer = nothing
+        end
+    else
+        left_buffer = right_buffer = bottom_buffer = top_buffer = nothing
+    end
+
+    mpi_subdomain_buffers = Neighbours{Union{SubdomainSideBuffer{buffer_array}, Nothing}}((
+        left_buffer, right_buffer, bottom_buffer, top_buffer
+    ))
+
     # Main grid container
     edge_size = remainder_block_size .- 2*ghost
     grid = BlockGrid{
@@ -89,15 +181,15 @@ function BlockGrid(params::ArmonParameters{T}) where {T}
         ghost, typeof(static_size),
         state_type, typeof(params.device)
     }(
-        grid_size, static_sized_grid, cell_size, edge_size, params.device, global_dt,
-        blocks, edge_blocks, remote_blocks, threads_workload, threads_logs
+        grid_size, static_sized_grid, cell_size, edge_size, params.device, global_dt, blocks,
+        edge_blocks, remote_blocks, mpi_subdomain_buffers, threads_workload, threads_logs
     )
 
     # Allocate all local and remote blocks
     # Non-static (edge) blocks are placed on the right and top sides.
     # Remote blocks are placed on the edge of the grid.
     # Multithreading is necessary here in order to guarentee that no array is shared between two
-    # NUMA node (when we move the pages afterward), which can happen when allocations are done
+    # NUMA nodes (when we move the pages afterward), which can happen when allocations are done
     # sequentially.
     inner_grid = CartesianIndices(static_sized_grid)
     device_kwargs = alloc_device_kwargs(params)
@@ -140,7 +232,17 @@ function BlockGrid(params::ArmonParameters{T}) where {T}
                     neighbour = neighbour_at(params, side)  # MPI rank
                     global_pos = CartesianIndex(params.cart_coords .+ offset_to(side))  # pos in the cart_comm
 
-                    RemoteTaskBlock{buffer_array}(buffer_size, remote_blk_pos, neighbour, global_pos, params.cart_comm, side)
+                    if params.comm_grouping
+                        # Creating the views on the MPI buffer. Cells are serialized indentically no matter the side
+                        # each block gets a slice of the buffer of the form [offset:offset+size-1] (offset is position-dependent)
+                        offset = 1 + real_face_size(static_size, side) * ghost * length(comm_vars()) * (pos[Int(next_axis(axis_of(side)))] - 1)
+                        side_buffer = mpi_subdomain_buffers[Int(side)]
+                        view_on_send_buffer = @view side_buffer.to_send.data[offset : (offset + buffer_size - 1)]
+                        view_on_recv_buffer = @view side_buffer.to_recv.data[offset : (offset + buffer_size - 1)]
+                        RemoteTaskBlock{buffer_array}(buffer_size, pos, neighbour, global_pos, params.cart_comm, view_on_send_buffer, view_on_recv_buffer, side_buffer)
+                    else
+                        RemoteTaskBlock{buffer_array}(buffer_size, remote_blk_pos, neighbour, global_pos, params.cart_comm, side)
+                    end
                 else
                     # "Fake" remote block for non-existant neighbour at the edge of the global domain
                     RemoteTaskBlock{buffer_array}(remote_blk_pos)
