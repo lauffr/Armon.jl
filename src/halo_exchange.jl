@@ -291,7 +291,12 @@ function finish_exchange(
 ) where {D, H, B}
     # Finish the exchange between one local block and a remote block from another sub-domain
     if params.comm_grouping
-        !MPI.Test(other_blk.subdomain_buffer.requests[2]) && return false  # Still waiting
+        if !(@atomicswap other_blk.subdomain_buffer.test_lock.x = true) # sort of mutex_trylock
+            !MPI.Test(other_blk.subdomain_buffer.requests[2]) && return false  # Still waiting
+            @atomic other_blk.subdomain_buffer.test_lock.x = false # sort of mutex_unlock
+        else
+            return false
+        end
     else
         !MPI.Testall(other_blk.requests) && return false  # Still waiting
     end

@@ -91,7 +91,8 @@ function BlockGrid(params::ArmonParameters{T}) where {T}
                 MPI.Buffer(buffer_array(undef, params.N[Int(Axis.Y)] * ghost * length(comm_vars()))), # to_recv
                 MPI.UnsafeMultiRequest(2),                                                            # requests
                 Atomic{Int}(0),                                                                       # block_count
-                grid_size[Int(Axis.Y)]
+                grid_size[Int(Axis.Y)],
+                Atomic{Bool}(false)
             )
             # rule : the tag of a communication is the side index (from sender point of view)
             MPI.Send_init(left_buffer.to_send, params.cart_comm, left_buffer.requests[1];
@@ -113,7 +114,8 @@ function BlockGrid(params::ArmonParameters{T}) where {T}
                 MPI.Buffer(buffer_array(undef, params.N[Int(Axis.Y)] * ghost * length(comm_vars()))),
                 MPI.UnsafeMultiRequest(2),
                 Atomic{Int}(0),
-                grid_size[Int(Axis.Y)]
+                grid_size[Int(Axis.Y)],
+                Atomic{Bool}(false)
             )
             MPI.Send_init(right_buffer.to_send, params.cart_comm, right_buffer.requests[1];
                 dest = neighbour_at(params, Side.Right),
@@ -133,7 +135,8 @@ function BlockGrid(params::ArmonParameters{T}) where {T}
                 MPI.Buffer(buffer_array(undef, params.N[Int(Axis.X)] * ghost * length(comm_vars()))),
                 MPI.UnsafeMultiRequest(2),
                 Atomic{Int}(0),
-                grid_size[Int(Axis.X)]
+                grid_size[Int(Axis.X)],
+                Atomic{Bool}(false)
             )
             MPI.Send_init(bottom_buffer.to_send, params.cart_comm, bottom_buffer.requests[1];
                 dest = neighbour_at(params, Side.Bottom),
@@ -153,7 +156,8 @@ function BlockGrid(params::ArmonParameters{T}) where {T}
                 MPI.Buffer(buffer_array(undef, params.N[Int(Axis.X)] * ghost * length(comm_vars()))),
                 MPI.UnsafeMultiRequest(2),
                 Atomic{Int}(0),
-                grid_size[Int(Axis.X)]
+                grid_size[Int(Axis.X)],
+                Atomic{Bool}(false)
             )
             MPI.Send_init(top_buffer.to_send, params.cart_comm, top_buffer.requests[1];
                 dest = neighbour_at(params, Side.Top),

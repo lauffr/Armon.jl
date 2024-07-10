@@ -5,6 +5,7 @@ struct SubdomainSideBuffer{BufferArray}
     requests    :: MPI.UnsafeMultiRequest
     block_count :: Atomic{Int}
     max_blocks  :: Int
+    test_lock   :: Atomic{Bool}
 end
 
 """
