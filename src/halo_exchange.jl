@@ -1,4 +1,3 @@
-
 @generic_kernel function boundary_conditions!(
     ρ::V, u::V, v::V, p::V, c::V, g::V, E::V,
     bsize::BlockSize, axis::Axis.T, side::Side.T,
@@ -223,8 +222,8 @@ end
     ) where {D, H, B}
 
 Start the exchange between one local block and a remote block from another sub-domain.
-Returns `true` if the exchange is [`BlockExchangeState.Done`](@ref), `false` if
-[`BlockExchangeState.InProgress`](@ref).
+Returns `true` if the exchange is [`BlockExchangeState.InProgress`](@ref), `false` if
+[`BlockExchangeState.NotReady`](@ref).
 """
 function start_exchange(
     params::ArmonParameters,
@@ -248,14 +247,18 @@ function start_exchange(
     wait(params)  # Wait for the copy to complete
 
     if params.comm_grouping
-        number_of_blocks_done = (@atomic other_blk.subdomain_buffer.block_count.x += 1)
-        if number_of_blocks_done == other_blk.subdomain_buffer.max_blocks # the buffer is filled
-            MPI.Wait(other_blk.subdomain_buffer.requests[1]) # necessary synchronisation
+        number_of_blocks_done = (@atomic other_blk.subdomain_buffer.start_count.x += 1)
+        if number_of_blocks_done == other_blk.subdomain_buffer.max_count # the buffer is filled
             MPI.Start(other_blk.subdomain_buffer.requests[1]) # send
-            @atomic other_blk.subdomain_buffer.block_count.x = 0 # reset
+            # Start needs no protection via atomics because Test won't run before this value is set to true
+            other_blk.subdomain_buffer.send_posted = true
+            # this variable is guaranteed to not be accessed between the if statement and this line
+            @atomic other_blk.subdomain_buffer.start_count.x = 0 # reset
         end
         if number_of_blocks_done == 1 # this is bad (i think there's a way of doing this earlier)
             MPI.Start(other_blk.subdomain_buffer.requests[2]) # receive
+            # Start needs no protection via atomics because Test won't run before this value is set to true
+            other_blk.subdomain_buffer.recv_posted = true
         end
     else
         # TODO: use RMA with processes local to the node.
@@ -270,7 +273,7 @@ function start_exchange(
         =#
     end
 
-    return false
+    return true
 end
 
 
@@ -291,10 +294,22 @@ function finish_exchange(
 ) where {D, H, B}
     # Finish the exchange between one local block and a remote block from another sub-domain
     if params.comm_grouping
-        if !(@atomicswap other_blk.subdomain_buffer.test_lock.x = true) # sort of mutex_trylock
-            ongoing = !MPI.Test(other_blk.subdomain_buffer.requests[2])
+        if (
+            other_blk.subdomain_buffer.send_posted && # guarantees that we're not testing completed
+            other_blk.subdomain_buffer.recv_posted && # requests from previous cycle
+            !(@atomicswap other_blk.subdomain_buffer.test_lock.x = true) # sort of mutex_trylock
+        )
+            # testing the send request as well, guarantees that next cycle won't need to wait for its completion
+            ongoing = !MPI.Testall(other_blk.subdomain_buffer.requests)
             @atomic other_blk.subdomain_buffer.test_lock.x = false # sort of mutex_unlock
             ongoing && return false # Still waiting
+            n_finished_blocks = (@atomic other_blk.subdomain_buffer.finish_count.x += 1)
+            if n_finished_blocks == other_blk.subdomain_buffer.max_count # we are finishing the buffer's last block
+                @atomic other_blk.subdomain_buffer.finish_count.x = 0 # reset
+                # marking requests as "not started", will be set back to true when Start is called in next cycle
+                other_blk.subdomain_buffer.send_posted = false
+                other_blk.subdomain_buffer.recv_posted = false
+            end
         else
             return false
         end
@@ -321,7 +336,6 @@ function finish_exchange(
 end
 
 
-# TODO : grouping comms
 function block_ghost_exchange(
     params::ArmonParameters, state::SolverState,
     blk::LocalTaskBlock{D, H}, other_blk::RemoteTaskBlock{B}, side::Side.T
@@ -339,15 +353,18 @@ function block_ghost_exchange(
 
     # Exchange between one local block and a remote block from another sub-domain
     if bint_state == BlockExchangeState.NotReady
-        exchange_ended = start_exchange(params, blk, other_blk, side)
-        side_flag = side in first_sides() ? 0b10 : 0b01
-        !exchange_ended && interface_start_exchange!(bint, side_flag; for_MPI=true)
+        if !start_exchange(params, blk, other_blk, side)
+            return BlockExchangeState.NotReady
+        else
+            side_flag = side in first_sides() ? 0b10 : 0b01
+            interface_start_exchange!(bint, side_flag; for_MPI=true)
+            return BlockExchangeState.InProgress
+        end
     else
         exchange_ended = finish_exchange(params, blk, other_blk, side)
         exchange_ended && interface_end_exchange!(bint; for_MPI=true)
+        return exchange_ended ? BlockExchangeState.Done : BlockExchangeState.InProgress
     end
-
-    return exchange_ended ? BlockExchangeState.Done : BlockExchangeState.InProgress
 end
 
 

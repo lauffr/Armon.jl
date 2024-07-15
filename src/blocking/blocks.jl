@@ -1,11 +1,14 @@
-struct SubdomainSideBuffer{BufferArray}
-    to_send     :: MPI.Buffer{BufferArray}
-    to_recv     :: MPI.Buffer{BufferArray}
+mutable struct SubdomainSideBuffer{BufferArray}
+    to_send      :: MPI.Buffer{BufferArray}
+    to_recv      :: MPI.Buffer{BufferArray}
     # requests[1] is the send request, requests[2] the receive request
-    requests    :: MPI.UnsafeMultiRequest
-    block_count :: Atomic{Int}
-    max_blocks  :: Int
-    test_lock   :: Atomic{Bool}
+    requests     :: MPI.UnsafeMultiRequest
+    start_count  :: Atomic{Int}
+    finish_count :: Atomic{Int}
+    max_count    :: Int
+    test_lock    :: Atomic{Bool}
+    send_posted  :: Bool
+    recv_posted  :: Bool
 end
 
 """
