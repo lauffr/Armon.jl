@@ -220,6 +220,10 @@ function solver_cycle_async(params::ArmonParameters, grid::BlockGrid, max_step_c
     timeout = UInt(120e9)  # 120 sec  # TODO: should depend on the total workload, or be deactivatable
     threads_count = params.use_threading ? Threads.nthreads() : 1
 
+    if params.force_barrier || params.comm_grouping
+        MPI.Barrier(MPI.COMM_WORLD)
+    end
+
     @threaded :outside_kernel for _ in 1:threads_count
         # TODO: thread block iteration should be done along the current axis
 
