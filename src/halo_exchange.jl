@@ -249,6 +249,10 @@ function start_exchange(
     if params.comm_grouping
         number_of_blocks_done = (@atomic other_blk.subdomain_buffer.start_count.x += 1)
         if number_of_blocks_done == other_blk.subdomain_buffer.max_count # the buffer is filled
+            # <ORDER_CHECKING>
+            l = lastindex(other_blk.subdomain_buffer.to_send.data)
+            other_blk.subdomain_buffer.to_send.data[l] = Float64(blk.state.global_dt.cycle)
+            # </ORDER_CHECKING>
             MPI.Start(other_blk.subdomain_buffer.requests[1]) # send
             # Start needs no protection via atomics because Test won't run before this value is set to true
             other_blk.subdomain_buffer.send_posted = true
@@ -303,6 +307,14 @@ function finish_exchange(
             ongoing = !MPI.Testall(other_blk.subdomain_buffer.requests)
             @atomic other_blk.subdomain_buffer.test_lock.x = false # sort of mutex_unlock
             ongoing && return false # Still waiting
+            # <ORDER_CHECKING>
+            l = lastindex(other_blk.subdomain_buffer.to_recv.data)
+            bufstep = other_blk.subdomain_buffer.to_recv.data[l]
+            realstep = blk.state.global_dt.cycle
+            if bufstep != Float64(realstep)
+                println("Message order mismatch : received message for cycle $bufstep at cycle $realstep")
+            end
+            # </ORDER_CHECKING>
             n_finished_blocks = (@atomic other_blk.subdomain_buffer.finish_count.x += 1)
             if n_finished_blocks == other_blk.subdomain_buffer.max_count # we are finishing the buffer's last block
                 @atomic other_blk.subdomain_buffer.finish_count.x = 0 # reset

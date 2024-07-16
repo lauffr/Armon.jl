@@ -87,8 +87,8 @@ function BlockGrid(params::ArmonParameters{T}) where {T}
     if params.comm_grouping
         if has_neighbour(params, Side.Left)
             left_buffer = SubdomainSideBuffer{buffer_array}(
-                MPI.Buffer(buffer_array(undef, params.N[Int(Axis.Y)] * ghost * length(comm_vars()))), # to_send
-                MPI.Buffer(buffer_array(undef, params.N[Int(Axis.Y)] * ghost * length(comm_vars()))), # to_recv
+                MPI.Buffer(buffer_array(undef, params.N[Int(Axis.Y)] * ghost * length(comm_vars()) + 1)), # to_send
+                MPI.Buffer(buffer_array(undef, params.N[Int(Axis.Y)] * ghost * length(comm_vars()) + 1)), # to_recv
                 MPI.UnsafeMultiRequest(2),                                                            # requests
                 Atomic{Int}(0),                                                                       # block_count
                 Atomic{Int}(0),                                                                       # block_count
@@ -113,8 +113,8 @@ function BlockGrid(params::ArmonParameters{T}) where {T}
 
         if has_neighbour(params, Side.Right)
             right_buffer = SubdomainSideBuffer{buffer_array}(
-                MPI.Buffer(buffer_array(undef, params.N[Int(Axis.Y)] * ghost * length(comm_vars()))),
-                MPI.Buffer(buffer_array(undef, params.N[Int(Axis.Y)] * ghost * length(comm_vars()))),
+                MPI.Buffer(buffer_array(undef, params.N[Int(Axis.Y)] * ghost * length(comm_vars()) + 1)),
+                MPI.Buffer(buffer_array(undef, params.N[Int(Axis.Y)] * ghost * length(comm_vars()) + 1)),
                 MPI.UnsafeMultiRequest(2),
                 Atomic{Int}(0),
                 Atomic{Int}(0),
@@ -137,8 +137,8 @@ function BlockGrid(params::ArmonParameters{T}) where {T}
 
         if has_neighbour(params, Side.Bottom)
             bottom_buffer = SubdomainSideBuffer{buffer_array}(
-                MPI.Buffer(buffer_array(undef, params.N[Int(Axis.X)] * ghost * length(comm_vars()))),
-                MPI.Buffer(buffer_array(undef, params.N[Int(Axis.X)] * ghost * length(comm_vars()))),
+                MPI.Buffer(buffer_array(undef, params.N[Int(Axis.X)] * ghost * length(comm_vars()) + 1)),
+                MPI.Buffer(buffer_array(undef, params.N[Int(Axis.X)] * ghost * length(comm_vars()) + 1)),
                 MPI.UnsafeMultiRequest(2),
                 Atomic{Int}(0),
                 Atomic{Int}(0),
@@ -161,8 +161,8 @@ function BlockGrid(params::ArmonParameters{T}) where {T}
 
         if has_neighbour(params, Side.Top)
             top_buffer = SubdomainSideBuffer{buffer_array}(
-                MPI.Buffer(buffer_array(undef, params.N[Int(Axis.X)] * ghost * length(comm_vars()))),
-                MPI.Buffer(buffer_array(undef, params.N[Int(Axis.X)] * ghost * length(comm_vars()))),
+                MPI.Buffer(buffer_array(undef, params.N[Int(Axis.X)] * ghost * length(comm_vars()) + 1)),
+                MPI.Buffer(buffer_array(undef, params.N[Int(Axis.X)] * ghost * length(comm_vars()) + 1)),
                 MPI.UnsafeMultiRequest(2),
                 Atomic{Int}(0),
                 Atomic{Int}(0),
