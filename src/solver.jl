@@ -221,7 +221,7 @@ function solver_cycle_async(params::ArmonParameters, grid::BlockGrid, max_step_c
     threads_count = params.use_threading ? Threads.nthreads() : 1
 
     if params.force_barrier || params.comm_grouping
-        MPI.Barrier(MPI.COMM_WORLD)
+        MPI.Barrier(params.global_comm)
     end
 
     @threaded :outside_kernel for _ in 1:threads_count
