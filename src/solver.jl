@@ -268,12 +268,14 @@ function solver_cycle_async(params::ArmonParameters, grid::BlockGrid, max_step_c
                 # `block_state_machine`, to prevent deadlocks (caused by MPI or multithreading),
                 # we should stop busy waiting.
                 if time_ns() - t_start > timeout
-                    solver_error(:timeout, "cycle took too long in thread $tid")
+                    # solver_error(:timeout, "cycle took too long in thread $tid")
+                    println("cycle $(grid.global_dt.cycle) took too long in thread $tid")
+		    MPI.Abort(MPI.COMM_WORLD, 1)
                 end
-                stop_count = no_progress_count ÷ params.busy_wait_limit
-                wait_time, waited_for_mpi = stop_busy_waiting(params, grid, first_waiting_block, stop_count)
-                total_wait_time += wait_time
-                total_mpi_waits += waited_for_mpi
+                # stop_count = no_progress_count ÷ params.busy_wait_limit
+                # wait_time, waited_for_mpi = stop_busy_waiting(params, grid, first_waiting_block, stop_count)
+                # total_wait_time += wait_time
+                # total_mpi_waits += waited_for_mpi
             end
         end
 

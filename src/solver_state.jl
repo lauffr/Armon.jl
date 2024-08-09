@@ -33,6 +33,7 @@ mutable struct GlobalTimeStep{T}
     contributions  :: Atomic{Int}
     expected_count :: Int
     MPI_reduction  :: MPI.AbstractRequest
+    MPI_lock       :: Atomic{Bool}
     MPI_buffer     :: MPI.RBuffer
 
     function GlobalTimeStep{T}() where {T}
@@ -41,7 +42,8 @@ mutable struct GlobalTimeStep{T}
             0, zero(T),
             zero(T), typemax(T), Atomic(typemax(T)),
             Atomic(0), 0,
-            MPI.Request(), MPI.RBuffer(Ref{T}(), Ref{T}())
+            MPI.Request(), Atomic{Bool}(false),
+            MPI.RBuffer(Ref{T}(), Ref{T}())
         )
     end
 end
@@ -94,7 +96,24 @@ function wait_for_dt!(params::ArmonParameters, global_dt::GlobalTimeStep)
     # Since this thread started working on a block without the time step for the new cycle, we
     # consider that all blocks of that thread are in the same state, therefore loosing no time by
     # using a blocking wait here. Only a single thread will wait.
-    params.use_MPI && wait(global_dt.MPI_reduction)
+    # params.use_MPI && wait(global_dt.MPI_reduction)
+    begin_waiting = time_ns()
+    if params.use_MPI
+        if !(@atomicswap global_dt.MPI_lock.x = true) # lock acquired
+            # does nothing if the request is already completed
+            wait(global_dt.MPI_reduction)
+            # the request is guaranteed to be completed before the spinlock is unlocked
+        else # one thread is already waiting on the request
+            # spinlocking until the other thread completes the request, for 10 seconds at most
+            while !(@atomicswap global_dt.MPI_lock.x = true)
+                if time_ns() - begin_waiting >= 120000000000
+                    println("Waited more than 120 seconds for time step reduction in cycle $(global_dt.cycle), aborting...")
+                    MPI.Abort(MPI.COMM_WORLD, 1)
+                end
+            end
+        end
+        @atomic global_dt.MPI_lock.x = false
+    end
     return update_dt!(params, global_dt)
 end
 
